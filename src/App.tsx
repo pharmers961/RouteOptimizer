@@ -6,7 +6,10 @@ import { optimizeRoute, RouteResult } from './utils/routing';
 import Map from './components/Map';
 
 export default function App() {
-  const [locations, setLocations] = useState<Location[]>([]);
+  const [locations, setLocations] = useState<Location[]>(() => {
+    const saved = localStorage.getItem('routeOptimizerLocations');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [inputValue, setInputValue] = useState('');
   const [inputMode, setInputMode] = useState<'start' | 'end' | 'stop'>('start');
   const [isGeocoding, setIsGeocoding] = useState(false);
@@ -19,7 +22,19 @@ export default function App() {
   const [isAutocompleting, setIsAutocompleting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const [startEqualsEnd, setStartEqualsEnd] = useState(false);
+  const [startEqualsEnd, setStartEqualsEnd] = useState(() => {
+    const saved = localStorage.getItem('routeOptimizerStartEqualsEnd');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  // Save to localStorage whenever locations or startEqualsEnd change
+  useEffect(() => {
+    localStorage.setItem('routeOptimizerLocations', JSON.stringify(locations));
+  }, [locations]);
+
+  useEffect(() => {
+    localStorage.setItem('routeOptimizerStartEqualsEnd', JSON.stringify(startEqualsEnd));
+  }, [startEqualsEnd]);
 
   const startLoc = locations.find(l => l.type === 'start');
   const endLoc = locations.find(l => l.type === 'end');
@@ -205,9 +220,9 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col md:flex-row h-screen w-full bg-stone-50 text-stone-900 font-sans">
+    <div className="flex flex-col md:flex-row min-h-screen md:h-screen w-full bg-stone-50 text-stone-900 font-sans">
       {/* Sidebar */}
-      <div className="w-full md:w-96 bg-white shadow-xl z-10 flex flex-col h-1/2 md:h-full overflow-hidden shrink-0">
+      <div className="w-full md:w-96 bg-white shadow-xl z-10 flex flex-col md:h-full md:overflow-hidden shrink-0">
         <div className="p-6 border-b border-stone-100">
           <h1 className="text-2xl font-bold text-stone-800 flex items-center gap-2 font-serif">
             <Route className="w-6 h-6 text-amber-700" />
@@ -216,7 +231,7 @@ export default function App() {
           <p className="text-sm text-stone-500 mt-1">Find the most efficient route</p>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto">
+        <div className="p-6 md:flex-1 md:overflow-y-auto">
           <form onSubmit={handleAddLocation} className="mb-6 space-y-4">
             <div>
               <label className="block text-sm font-medium text-stone-700 mb-1">Add Location</label>
@@ -387,7 +402,7 @@ export default function App() {
       </div>
 
       {/* Map Area */}
-      <div className="flex-1 relative bg-stone-200 h-1/2 md:h-full">
+      <div className="w-full h-[300px] md:h-full md:flex-1 relative bg-stone-200">
         <Map 
           locations={routeResult ? routeResult.optimizedLocations : locations} 
           routeGeometry={routeResult?.geometry || null} 
