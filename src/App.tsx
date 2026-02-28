@@ -24,7 +24,7 @@ export default function App() {
 
   const [startEqualsEnd, setStartEqualsEnd] = useState(() => {
     const saved = localStorage.getItem('routeOptimizerStartEqualsEnd');
-    return saved ? JSON.parse(saved) : false;
+    return saved ? JSON.parse(saved) : true;
   });
 
   // Save to localStorage whenever locations or startEqualsEnd change
