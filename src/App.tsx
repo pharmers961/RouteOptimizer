@@ -222,6 +222,14 @@ export default function App() {
     setRouteResult(null);
   };
 
+  const handleClearAll = () => {
+    setLocations([]);
+    setRouteResult(null);
+    setInputValue('');
+    setError(null);
+    setInputMode('start');
+  };
+
   const handleOptimize = async () => {
     const start = locations.find(l => l.type === 'start');
     if (!start) {
@@ -346,7 +354,17 @@ export default function App() {
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-stone-400 uppercase tracking-wider">Locations</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-stone-400 uppercase tracking-wider">Locations</h3>
+                {locations.length > 0 && (
+                  <button 
+                    onClick={handleClearAll}
+                    className="text-xs text-stone-400 hover:text-stone-600 transition-colors"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
               <label className="flex items-center gap-2 text-sm text-stone-600 cursor-pointer hover:text-stone-900 transition-colors">
                 <input 
                   type="checkbox" 
