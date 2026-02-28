@@ -359,7 +359,7 @@ export default function App() {
                 {locations.length > 0 && (
                   <button 
                     onClick={handleClearAll}
-                    className="text-xs text-stone-400 hover:text-stone-600 transition-colors"
+                    className="text-xs text-stone-400 underline decoration-stone-200 underline-offset-2 hover:text-stone-600 transition-colors"
                   >
                     Clear All
                   </button>
