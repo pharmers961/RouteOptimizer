@@ -58,6 +58,22 @@ function formatAddress(item: any, query: string): string {
   return finalParts.join(', ') || item.display_name;
 }
 
+export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    if (data && data.address) {
+      return formatAddress(data, '');
+    }
+    return data?.display_name || null;
+  } catch (error) {
+    console.error("Reverse geocoding error:", error);
+    return null;
+  }
+}
+
 export async function autocompleteAddress(query: string, startLat?: number, startLon?: number): Promise<Suggestion[]> {
   try {
     let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1&countrycodes=us`;

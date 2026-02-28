@@ -1,5 +1,7 @@
 {
   "name": "Route Optimizer",
   "description": "Find the most efficient route between multiple stops and export to Google Maps.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }

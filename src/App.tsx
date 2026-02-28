@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone } from 'lucide-react';
-import { Location, geocode, autocompleteAddress, Suggestion } from './utils/geocoding';
+import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed } from 'lucide-react';
+import { Location, geocode, autocompleteAddress, Suggestion, reverseGeocode } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
 import Map from './components/Map';
 
@@ -14,6 +14,7 @@ export default function App() {
   const [inputMode, setInputMode] = useState<'start' | 'end' | 'stop'>('start');
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -165,6 +166,53 @@ export default function App() {
     }
   };
 
+  const handleGetCurrentLocation = () => {
+    if (inputMode === 'start' && locations.some(l => l.type === 'start')) {
+      setError("Start location already exists. Remove it first.");
+      return;
+    }
+    if (inputMode === 'end' && locations.some(l => l.type === 'end')) {
+      setError("End location already exists. Remove it first.");
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      setError("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    setIsLocating(true);
+    setError(null);
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const addressName = await reverseGeocode(latitude, longitude) || "Current Location";
+        
+        const newLocation: Location = {
+          id: uuidv4(),
+          address: addressName,
+          lat: latitude,
+          lon: longitude,
+          type: inputMode,
+          displayName: addressName
+        };
+        
+        setLocations(prev => [...prev, newLocation]);
+        setInputValue('');
+        setRouteResult(null);
+        if (inputMode === 'start') setInputMode('stop');
+        setIsLocating(false);
+      },
+      (err) => {
+        console.error(err);
+        setError("Unable to retrieve your location. Please ensure permissions are granted.");
+        setIsLocating(false);
+      },
+      { enableHighAccuracy: true }
+    );
+  };
+
   const handleRemoveLocation = (id: string) => {
     const locToRemove = locations.find(l => l.id === id);
     if (locToRemove?.type === 'end' && startEqualsEnd) {
@@ -210,12 +258,12 @@ export default function App() {
       waypoints = '&waypoints=' + stops.map(s => `${s.lat},${s.lon}`).join('|');
     }
 
-    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints}`;
+    const url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypoints}&dir_action=navigate`;
     window.open(url, '_blank');
   };
 
   const handleOpenSingleLocation = (loc: Location) => {
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lon}`;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lon}&dir_action=navigate`;
     window.open(url, '_blank');
   };
 
@@ -252,12 +300,22 @@ export default function App() {
                     onChange={(e) => setInputValue(e.target.value)}
                     onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
                     placeholder="Enter address..."
-                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
+                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
                   />
-                  {isAutocompleting && (
+                  {isAutocompleting ? (
                     <div className="absolute right-3 top-2.5 text-stone-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
                     </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleGetCurrentLocation}
+                      disabled={isLocating}
+                      className="absolute right-2 top-2 p-1 text-stone-400 hover:text-amber-600 transition-colors disabled:opacity-50"
+                      title="Use current location"
+                    >
+                      {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
+                    </button>
                   )}
                   {showSuggestions && suggestions.length > 0 && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-stone-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
