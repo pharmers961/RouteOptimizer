@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed } from 'lucide-react';
+import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Camera, Sparkles } from 'lucide-react';
 import { Location, geocode, autocompleteAddress, Suggestion, reverseGeocode } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
+import { extractAddressFromImage, guessCorrectAddress } from './utils/ai';
 import Map from './components/Map';
+import CameraModal from './components/CameraModal';
 
 export default function App() {
   const [locations, setLocations] = useState<Location[]>(() => {
@@ -15,6 +17,9 @@ export default function App() {
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isExtractingAddress, setIsExtractingAddress] = useState(false);
+  const [isGuessingAddress, setIsGuessingAddress] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -142,7 +147,22 @@ export default function App() {
 
     setIsGeocoding(true);
     setError(null);
-    const result = await geocode(inputValue, startLoc?.lat, startLoc?.lon);
+    let result = await geocode(inputValue, startLoc?.lat, startLoc?.lon);
+    
+    // If geocoding fails, try to guess the correct address with AI
+    if (!result) {
+      setIsGeocoding(false);
+      setIsGuessingAddress(true);
+      const guessedAddress = await guessCorrectAddress(inputValue);
+      setIsGuessingAddress(false);
+      
+      if (guessedAddress) {
+        setInputValue(guessedAddress); // Update input with guessed address
+        setIsGeocoding(true);
+        result = await geocode(guessedAddress, startLoc?.lat, startLoc?.lon);
+      }
+    }
+    
     setIsGeocoding(false);
 
     if (result) {
@@ -162,7 +182,20 @@ export default function App() {
         setInputMode('stop');
       }
     } else {
-      setError("Could not find address. Please try again.");
+      setError("Could not find address. Please try checking the spelling or use the camera.");
+    }
+  };
+
+  const handleCaptureAddress = async (base64Image: string, mimeType: string) => {
+    setIsExtractingAddress(true);
+    setError(null);
+    const address = await extractAddressFromImage(base64Image, mimeType);
+    setIsExtractingAddress(false);
+    
+    if (address) {
+      setInputValue(address);
+    } else {
+      setError("Could not extract an address from the image. Please try again.");
     }
   };
 
@@ -307,23 +340,34 @@ export default function App() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
-                    placeholder="Enter address..."
-                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
+                    placeholder={isExtractingAddress ? "Scanning image..." : "Enter address..."}
+                    disabled={isExtractingAddress}
+                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600 disabled:opacity-50"
                   />
-                  {isAutocompleting ? (
+                  {isAutocompleting || isExtractingAddress ? (
                     <div className="absolute right-3 top-2.5 text-stone-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={handleGetCurrentLocation}
-                      disabled={isLocating}
-                      className="absolute right-2 top-2 p-1 text-stone-400 hover:text-amber-600 transition-colors disabled:opacity-50"
-                      title="Use current location"
-                    >
-                      {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
-                    </button>
+                    <div className="absolute right-2 top-2 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsCameraOpen(true)}
+                        className="p-1 text-stone-400 hover:text-amber-600 transition-colors"
+                        title="Scan address with camera"
+                      >
+                        <Camera className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleGetCurrentLocation}
+                        disabled={isLocating}
+                        className="p-1 text-stone-400 hover:text-amber-600 transition-colors disabled:opacity-50"
+                        title="Use current location"
+                      >
+                        {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
+                      </button>
+                    </div>
                   )}
                   {showSuggestions && suggestions.length > 0 && (
                     <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-stone-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
@@ -344,10 +388,10 @@ export default function App() {
             </div>
             <button 
               type="submit" 
-              disabled={isGeocoding || !inputValue.trim()}
+              disabled={isGeocoding || isGuessingAddress || isExtractingAddress || !inputValue.trim()}
               className="w-full bg-amber-700 hover:bg-amber-800 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              {isGeocoding ? 'Searching...' : <><Plus className="w-4 h-4" /> Add Location</>}
+              {isGeocoding ? 'Searching...' : isGuessingAddress ? <><Sparkles className="w-4 h-4 animate-pulse text-amber-200" /> AI guessing address...</> : <><Plus className="w-4 h-4" /> Add Location</>}
             </button>
             {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
           </form>
@@ -484,6 +528,12 @@ export default function App() {
           routeGeometry={routeResult?.geometry || null} 
         />
       </div>
+      
+      <CameraModal 
+        isOpen={isCameraOpen} 
+        onClose={() => setIsCameraOpen(false)} 
+        onCapture={handleCaptureAddress} 
+      />
     </div>
   );
 }
