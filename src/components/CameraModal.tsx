@@ -10,8 +10,17 @@ interface CameraModalProps {
 export default function CameraModal({ isOpen, onClose, onCapture }: CameraModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsReady(false);
+  }, []);
 
   const startCamera = useCallback(async () => {
     try {
@@ -21,23 +30,17 @@ export default function CameraModal({ isOpen, onClose, onCapture }: CameraModalP
       const mediaStream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: 'environment' } 
       });
-      setStream(mediaStream);
+      streamRef.current = mediaStream;
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
+      setIsReady(true);
       setError(null);
     } catch (err) {
       console.error('Error accessing camera:', err);
       setError('Could not access camera. Please check permissions.');
     }
   }, []);
-
-  const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-  }, [stream]);
 
   useEffect(() => {
     if (isOpen) {
@@ -101,7 +104,7 @@ export default function CameraModal({ isOpen, onClose, onCapture }: CameraModalP
         <div className="p-6 bg-stone-900 flex justify-center">
           <button 
             onClick={handleCapture}
-            disabled={!!error || !stream}
+            disabled={!!error || !isReady}
             className="w-16 h-16 rounded-full bg-amber-600 hover:bg-amber-500 border-4 border-stone-800 outline outline-2 outline-amber-600 flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Camera className="w-6 h-6 text-white" />
