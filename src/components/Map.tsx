@@ -56,17 +56,18 @@ export default function Map({ locations, routeGeometry }: MapProps) {
       const stops = allLocs.filter(l => l.type === 'stop');
       const stopIndex = stops.findIndex(l => l.id === loc.id) + 1;
       label = stopIndex.toString();
-      bgColor = 'bg-amber-700';
+      bgColor = loc.done ? 'bg-emerald-600' : 'bg-amber-700';
     }
 
-    const html = `<div class="${bgColor} text-white w-8 h-8 flex items-center justify-center rounded-full border-2 border-white shadow-md font-bold text-sm">${label}</div>`;
+    const opacityClass = loc.done ? 'opacity-60' : '';
+    const html = `<div class="${bgColor} ${opacityClass} text-white w-8 h-8 flex items-center justify-center rounded-full border-2 border-white shadow-md font-bold text-sm">${label}</div>`;
 
     return L.divIcon({
       html,
-      className: 'custom-leaflet-marker', // Avoid default leaflet styles
+      className: 'custom-leaflet-marker',
       iconSize: [32, 32],
       iconAnchor: [16, 16],
-      popupAnchor: [0, -16]
+      popupAnchor: [0, -16],
     });
   };
 
