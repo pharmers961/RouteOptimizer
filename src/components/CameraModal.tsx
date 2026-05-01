@@ -56,6 +56,11 @@ export default function CameraModal({ isOpen, onClose, onCapture }: CameraModalP
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
+      if (video.videoWidth === 0 || video.videoHeight === 0) {
+        setError("Camera not fully ready. Please wait a moment.");
+        return;
+      }
+      
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       

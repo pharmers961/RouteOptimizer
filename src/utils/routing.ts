@@ -7,28 +7,27 @@ export interface RouteResult {
   optimizedLocations: Location[];
 }
 
-export async function optimizeRoute(locations: Location[], signal?: AbortSignal): Promise<RouteResult | null> {
+export async function optimizeRoute(locations: Location[]): Promise<RouteResult | null> {
   if (locations.length < 2) return null;
 
   const start = locations.find(l => l.type === 'start');
   const end = locations.find(l => l.type === 'end');
   const stops = locations.filter(l => l.type === 'stop');
 
-  if (!start) throw new Error('Start location is required');
+  if (!start) throw new Error("Start location is required");
 
   const orderedLocations = [start, ...stops];
-  if (end) orderedLocations.push(end);
+  if (end) {
+    orderedLocations.push(end);
+  }
 
-  // OSRM trip requires at least 2 waypoints. With only start+end and no stops,
-  // there's nothing to optimize — fall through and let it return a 2-point trip.
   const coords = orderedLocations.map(l => `${l.lon},${l.lat}`).join(';');
   const destParam = end ? 'destination=last' : 'destination=any';
 
   const url = `https://router.project-osrm.org/trip/v1/driving/${coords}?source=first&${destParam}&roundtrip=false&overview=full&geometries=geojson`;
 
   try {
-    const response = await fetch(url, { signal });
-    if (!response.ok) throw new Error(`OSRM HTTP ${response.status}`);
+    const response = await fetch(url);
     const data = await response.json();
 
     if (data.code !== 'Ok') {
