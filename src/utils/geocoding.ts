@@ -76,14 +76,14 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string |
 
 export async function autocompleteAddress(query: string, startLat?: number, startLon?: number): Promise<Suggestion[]> {
   try {
-    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1&countrycodes=us`;
+    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
     if (startLat !== undefined && startLon !== undefined) {
-      // Create a ~50km bounding box around the start location
+      // Create a ~50km bounding box around the start location to bias the search slightly, without hard binding it
       const left = startLon - 0.5;
       const right = startLon + 0.5;
       const top = startLat + 0.5;
       const bottom = startLat - 0.5;
-      url += `&viewbox=${left},${top},${right},${bottom}&bounded=1`;
+      url += `&viewbox=${left},${top},${right},${bottom}`;
     }
     
     const response = await fetch(url);
@@ -108,14 +108,14 @@ export async function autocompleteAddress(query: string, startLat?: number, star
 
 export async function geocode(query: string, startLat?: number, startLon?: number): Promise<{ lat: number; lon: number; displayName: string } | null> {
   try {
-    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1&countrycodes=us`;
+    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
     if (startLat !== undefined && startLon !== undefined) {
-      // Create a ~50km bounding box around the start location
+      // Create a ~50km bounding box around the start location to bias the search slightly
       const left = startLon - 0.5;
       const right = startLon + 0.5;
       const top = startLat + 0.5;
       const bottom = startLat - 0.5;
-      url += `&viewbox=${left},${top},${right},${bottom}&bounded=1`;
+      url += `&viewbox=${left},${top},${right},${bottom}`;
     }
 
     const response = await fetch(url);

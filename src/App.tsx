@@ -1,15 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Camera, Sparkles } from 'lucide-react';
+import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Sparkles, Bookmark, BookmarkPlus } from 'lucide-react';
 import { Location, geocode, autocompleteAddress, Suggestion, reverseGeocode } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
-import { extractAddressFromImage, guessCorrectAddress } from './utils/ai';
+import { guessCorrectAddress } from './utils/ai';
 import Map from './components/Map';
-import CameraModal from './components/CameraModal';
+import SavedAddressesModal, { SavedAddress } from './components/SavedAddressesModal';
 
 export default function App() {
   const [locations, setLocations] = useState<Location[]>(() => {
     const saved = localStorage.getItem('routeOptimizerLocations');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>(() => {
+    const saved = localStorage.getItem('routeOptimizerSavedAddresses');
     return saved ? JSON.parse(saved) : [];
   });
   const [inputValue, setInputValue] = useState('');
@@ -17,8 +21,7 @@ export default function App() {
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [isExtractingAddress, setIsExtractingAddress] = useState(false);
+  const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   const [isGuessingAddress, setIsGuessingAddress] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +40,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('routeOptimizerLocations', JSON.stringify(locations));
   }, [locations]);
+
+  useEffect(() => {
+    localStorage.setItem('routeOptimizerSavedAddresses', JSON.stringify(savedAddresses));
+  }, [savedAddresses]);
 
   useEffect(() => {
     localStorage.setItem('routeOptimizerStartEqualsEnd', JSON.stringify(startEqualsEnd));
@@ -182,20 +189,7 @@ export default function App() {
         setInputMode('stop');
       }
     } else {
-      setError("Could not find address. Please try checking the spelling or use the camera.");
-    }
-  };
-
-  const handleCaptureAddress = async (base64Image: string, mimeType: string) => {
-    setIsExtractingAddress(true);
-    setError(null);
-    const address = await extractAddressFromImage(base64Image, mimeType);
-    setIsExtractingAddress(false);
-    
-    if (address) {
-      setInputValue(address);
-    } else {
-      setError("Could not extract an address from the image. Please try again.");
+      setError("Could not find address. Please try checking the spelling.");
     }
   };
 
@@ -261,6 +255,35 @@ export default function App() {
     setInputValue('');
     setError(null);
     setInputMode('start');
+  };
+
+  const handleToggleSaveAddress = (loc: Location) => {
+    setSavedAddresses(prev => {
+      const isSaved = prev.some(a => a.address === loc.address);
+      if (isSaved) {
+        return prev.filter(a => a.address !== loc.address);
+      } else {
+        return [...prev, {
+          id: uuidv4(),
+          address: loc.address,
+          displayName: loc.displayName || loc.address,
+          lat: loc.lat,
+          lon: loc.lon
+        }];
+      }
+    });
+  };
+
+  const isAddressSaved = (address: string) => savedAddresses.some(a => a.address === address);
+
+  const handleAddSavedToRoute = (addresses: SavedAddress[]) => {
+    const newLocations = addresses.map(addr => ({
+      ...addr,
+      id: uuidv4(),
+      type: 'stop' as const
+    }));
+    setLocations(prev => [...prev, ...newLocations]);
+    setRouteResult(null);
   };
 
   const handleOptimize = async () => {
@@ -340,24 +363,15 @@ export default function App() {
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
-                    placeholder={isExtractingAddress ? "Scanning image..." : "Enter address..."}
-                    disabled={isExtractingAddress}
-                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-16 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600 disabled:opacity-50"
+                    placeholder="Enter address..."
+                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600 disabled:opacity-50"
                   />
-                  {isAutocompleting || isExtractingAddress ? (
+                  {isAutocompleting ? (
                     <div className="absolute right-3 top-2.5 text-stone-400">
                       <Loader2 className="w-4 h-4 animate-spin" />
                     </div>
                   ) : (
                     <div className="absolute right-2 top-2 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setIsCameraOpen(true)}
-                        className="p-1 text-stone-400 hover:text-amber-600 transition-colors"
-                        title="Scan address with camera"
-                      >
-                        <Camera className="w-4 h-4" />
-                      </button>
                       <button
                         type="button"
                         onClick={handleGetCurrentLocation}
@@ -388,11 +402,20 @@ export default function App() {
             </div>
             <button 
               type="submit" 
-              disabled={isGeocoding || isGuessingAddress || isExtractingAddress || !inputValue.trim()}
+              disabled={isGeocoding || isGuessingAddress || !inputValue.trim()}
               className="w-full bg-amber-700 hover:bg-amber-800 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
             >
               {isGeocoding ? 'Searching...' : isGuessingAddress ? <><Sparkles className="w-4 h-4 animate-pulse text-amber-200" /> AI guessing address...</> : <><Plus className="w-4 h-4" /> Add Location</>}
             </button>
+            <div className="pt-2 flex justify-between items-center border-t border-stone-100">
+              <button 
+                type="button"
+                onClick={() => setIsSavedModalOpen(true)}
+                className="text-sm font-medium text-amber-700 hover:text-amber-800 flex items-center gap-1 transition-colors"
+              >
+                <Bookmark className="w-4 h-4" /> My Saved Addresses
+              </button>
+            </div>
             {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
           </form>
 
@@ -426,6 +449,9 @@ export default function App() {
                 <span className="text-xs font-bold text-stone-800 uppercase">Start</span>
                 {displayStartLoc && (
                   <div className="flex items-center gap-2">
+                    <button onClick={() => handleToggleSaveAddress(displayStartLoc)} className={`transition-colors ${isAddressSaved(displayStartLoc.address) ? 'text-amber-600' : 'text-stone-400 hover:text-amber-600'}`} title={isAddressSaved(displayStartLoc.address) ? "Remove from saved" : "Save this address"}>
+                      <Bookmark className="w-4 h-4" fill={isAddressSaved(displayStartLoc.address) ? "currentColor" : "none"} />
+                    </button>
                     <button onClick={() => handleOpenSingleLocation(displayStartLoc)} className="text-stone-400 hover:text-amber-600" title="Send to phone / Open in Maps">
                       <Smartphone className="w-4 h-4" />
                     </button>
@@ -456,6 +482,9 @@ export default function App() {
                         <span>{loc.address}</span>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        <button onClick={() => handleToggleSaveAddress(loc)} className={`transition-colors ${isAddressSaved(loc.address) ? 'text-amber-600' : 'text-stone-400 hover:text-amber-600'}`} title={isAddressSaved(loc.address) ? "Remove from saved" : "Save this address"}>
+                          <Bookmark className="w-4 h-4" fill={isAddressSaved(loc.address) ? "currentColor" : "none"} />
+                        </button>
                         <button onClick={() => handleOpenSingleLocation(loc)} className="text-stone-400 hover:text-amber-600" title="Send to phone / Open in Maps">
                           <Smartphone className="w-4 h-4" />
                         </button>
@@ -477,6 +506,9 @@ export default function App() {
                 <span className="text-xs font-bold text-stone-500 uppercase">End</span>
                 {displayEndLoc && (
                   <div className="flex items-center gap-2">
+                    <button onClick={() => handleToggleSaveAddress(displayEndLoc)} className={`transition-colors ${isAddressSaved(displayEndLoc.address) ? 'text-amber-600' : 'text-stone-400 hover:text-amber-600'}`} title={isAddressSaved(displayEndLoc.address) ? "Remove from saved" : "Save this address"}>
+                      <Bookmark className="w-4 h-4" fill={isAddressSaved(displayEndLoc.address) ? "currentColor" : "none"} />
+                    </button>
                     <button onClick={() => handleOpenSingleLocation(displayEndLoc)} className="text-stone-400 hover:text-amber-600" title="Send to phone / Open in Maps">
                       <Smartphone className="w-4 h-4" />
                     </button>
@@ -529,10 +561,12 @@ export default function App() {
         />
       </div>
       
-      <CameraModal 
-        isOpen={isCameraOpen} 
-        onClose={() => setIsCameraOpen(false)} 
-        onCapture={handleCaptureAddress} 
+      <SavedAddressesModal 
+        isOpen={isSavedModalOpen} 
+        onClose={() => setIsSavedModalOpen(false)} 
+        savedAddresses={savedAddresses}
+        onAddSelected={handleAddSavedToRoute}
+        onRemoveSaved={(id) => setSavedAddresses(prev => prev.filter(a => a.id !== id))}
       />
     </div>
   );
