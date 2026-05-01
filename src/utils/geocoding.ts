@@ -58,6 +58,18 @@ function formatAddress(item: any, query: string): string {
   return finalParts.join(', ') || item.display_name;
 }
 
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371; // Earth's radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
 export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
   try {
     const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&addressdetails=1`;
@@ -76,7 +88,8 @@ export async function reverseGeocode(lat: number, lon: number): Promise<string |
 
 export async function autocompleteAddress(query: string, startLat?: number, startLon?: number): Promise<Suggestion[]> {
   try {
-    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+    const limit = (startLat !== undefined && startLon !== undefined) ? 15 : 5;
+    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=${limit}&addressdetails=1`;
     if (startLat !== undefined && startLon !== undefined) {
       // Create a ~50km bounding box around the start location to bias the search slightly, without hard binding it
       const left = startLon - 0.5;
@@ -90,7 +103,15 @@ export async function autocompleteAddress(query: string, startLat?: number, star
     const data = await response.json();
     
     if (data && data.length > 0) {
-      return data.map((item: any) => {
+      if (startLat !== undefined && startLon !== undefined) {
+        data.sort((a: any, b: any) => {
+          const distA = calculateDistance(startLat, startLon, parseFloat(a.lat), parseFloat(a.lon));
+          const distB = calculateDistance(startLat, startLon, parseFloat(b.lat), parseFloat(b.lon));
+          return distA - distB;
+        });
+      }
+      
+      return data.slice(0, 5).map((item: any) => {
         return {
           id: item.place_id?.toString() || Math.random().toString(),
           displayName: formatAddress(item, query),
@@ -108,7 +129,8 @@ export async function autocompleteAddress(query: string, startLat?: number, star
 
 export async function geocode(query: string, startLat?: number, startLon?: number): Promise<{ lat: number; lon: number; displayName: string } | null> {
   try {
-    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&addressdetails=1`;
+    const limit = (startLat !== undefined && startLon !== undefined) ? 10 : 1;
+    let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=${limit}&addressdetails=1`;
     if (startLat !== undefined && startLon !== undefined) {
       // Create a ~50km bounding box around the start location to bias the search slightly
       const left = startLon - 0.5;
@@ -121,6 +143,14 @@ export async function geocode(query: string, startLat?: number, startLon?: numbe
     const response = await fetch(url);
     const data = await response.json();
     if (data && data.length > 0) {
+      if (startLat !== undefined && startLon !== undefined) {
+        data.sort((a: any, b: any) => {
+          const distA = calculateDistance(startLat, startLon, parseFloat(a.lat), parseFloat(a.lon));
+          const distB = calculateDistance(startLat, startLon, parseFloat(b.lat), parseFloat(b.lon));
+          return distA - distB;
+        });
+      }
+
       return {
         lat: parseFloat(data[0].lat),
         lon: parseFloat(data[0].lon),

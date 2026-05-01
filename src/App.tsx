@@ -1,21 +1,22 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Sparkles, Bookmark, BookmarkPlus } from 'lucide-react';
+import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Sparkles, Bookmark, BookmarkPlus, LogIn, LogOut } from 'lucide-react';
 import { Location, geocode, autocompleteAddress, Suggestion, reverseGeocode } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
 import { guessCorrectAddress } from './utils/ai';
 import Map from './components/Map';
 import SavedAddressesModal, { SavedAddress } from './components/SavedAddressesModal';
+import { useAuth } from './components/AuthProvider';
+import { collection, query, onSnapshot, setDoc, deleteDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { db, signInWithGoogle, signOut, handleFirestoreError, OperationType } from './utils/firebase';
 
 export default function App() {
+  const { user } = useAuth();
   const [locations, setLocations] = useState<Location[]>(() => {
     const saved = localStorage.getItem('routeOptimizerLocations');
     return saved ? JSON.parse(saved) : [];
   });
-  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>(() => {
-    const saved = localStorage.getItem('routeOptimizerSavedAddresses');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [inputMode, setInputMode] = useState<'start' | 'end' | 'stop'>('start');
   const [isGeocoding, setIsGeocoding] = useState(false);
@@ -42,12 +43,29 @@ export default function App() {
   }, [locations]);
 
   useEffect(() => {
-    localStorage.setItem('routeOptimizerSavedAddresses', JSON.stringify(savedAddresses));
-  }, [savedAddresses]);
-
-  useEffect(() => {
     localStorage.setItem('routeOptimizerStartEqualsEnd', JSON.stringify(startEqualsEnd));
   }, [startEqualsEnd]);
+
+  useEffect(() => {
+    if (!user) {
+      setSavedAddresses([]);
+      return;
+    }
+
+    const path = `users/${user.uid}/savedAddresses`;
+    const q = query(collection(db, path));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const addrs: SavedAddress[] = [];
+      snapshot.forEach(doc => {
+        addrs.push(doc.data() as SavedAddress);
+      });
+      setSavedAddresses(addrs);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, path);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const startLoc = locations.find(l => l.type === 'start');
   const endLoc = locations.find(l => l.type === 'end');
@@ -257,21 +275,47 @@ export default function App() {
     setInputMode('start');
   };
 
-  const handleToggleSaveAddress = (loc: Location) => {
-    setSavedAddresses(prev => {
-      const isSaved = prev.some(a => a.address === loc.address);
-      if (isSaved) {
-        return prev.filter(a => a.address !== loc.address);
-      } else {
-        return [...prev, {
-          id: uuidv4(),
+  const handleToggleSaveAddress = async (loc: Location) => {
+    if (!user) {
+      try {
+        await signInWithGoogle();
+        // Return here because after login they'll have to click again, or we can handle it seamlessly.
+        // For simplicity, let them click again after login or let it continue.
+        return;
+      } catch (err) {
+        return;
+      }
+    }
+
+    const isSaved = savedAddresses.some(a => a.address === loc.address);
+    if (isSaved) {
+      const savedNode = savedAddresses.find(a => a.address === loc.address);
+      if (savedNode) {
+        const docRef = doc(db, `users/${user.uid}/savedAddresses/${savedNode.id}`);
+        try {
+          await deleteDoc(docRef);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/savedAddresses/${savedNode.id}`);
+        }
+      }
+    } else {
+      const newId = uuidv4();
+      const docRef = doc(db, `users/${user.uid}/savedAddresses/${newId}`);
+      try {
+        await setDoc(docRef, {
+          id: newId,
+          userId: user.uid,
           address: loc.address,
           displayName: loc.displayName || loc.address,
           lat: loc.lat,
-          lon: loc.lon
-        }];
+          lon: loc.lon,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/savedAddresses/${newId}`);
       }
-    });
+    }
   };
 
   const isAddressSaved = (address: string) => savedAddresses.some(a => a.address === address);
@@ -284,6 +328,16 @@ export default function App() {
     }));
     setLocations(prev => [...prev, ...newLocations]);
     setRouteResult(null);
+  };
+
+  const handleRemoveSavedAddress = async (id: string) => {
+    if (!user) return;
+    const docRef = doc(db, `users/${user.uid}/savedAddresses/${id}`);
+    try {
+      await deleteDoc(docRef);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/savedAddresses/${id}`);
+    }
   };
 
   const handleOptimize = async () => {
@@ -410,11 +464,37 @@ export default function App() {
             <div className="pt-2 flex justify-between items-center border-t border-stone-100">
               <button 
                 type="button"
-                onClick={() => setIsSavedModalOpen(true)}
+                onClick={async () => {
+                  if (!user) {
+                    try {
+                      await signInWithGoogle();
+                    } catch (e) {
+                      return;
+                    }
+                  }
+                  setIsSavedModalOpen(true);
+                }}
                 className="text-sm font-medium text-amber-700 hover:text-amber-800 flex items-center gap-1 transition-colors"
               >
                 <Bookmark className="w-4 h-4" /> My Saved Addresses
               </button>
+              {user ? (
+                <button 
+                  type="button"
+                  onClick={signOut}
+                  className="text-xs text-stone-500 hover:text-stone-700 flex items-center gap-1 transition-colors"
+                >
+                  <LogOut className="w-3 h-3" /> Sign out
+                </button>
+              ) : (
+                <button 
+                  type="button"
+                  onClick={signInWithGoogle}
+                  className="text-xs text-stone-500 hover:text-stone-700 flex items-center gap-1 transition-colors"
+                >
+                  <LogIn className="w-3 h-3" /> Sign in to save
+                </button>
+              )}
             </div>
             {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
           </form>
@@ -566,7 +646,7 @@ export default function App() {
         onClose={() => setIsSavedModalOpen(false)} 
         savedAddresses={savedAddresses}
         onAddSelected={handleAddSavedToRoute}
-        onRemoveSaved={(id) => setSavedAddresses(prev => prev.filter(a => a.id !== id))}
+        onRemoveSaved={handleRemoveSavedAddress}
       />
     </div>
   );

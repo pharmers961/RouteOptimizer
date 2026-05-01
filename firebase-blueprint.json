@@ -1,0 +1,26 @@
+{
+  "entities": {
+    "SavedAddress": {
+      "title": "Saved Address",
+      "description": "User's saved address",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "address": { "type": "string" },
+        "displayName": { "type": "string" },
+        "lat": { "type": "number" },
+        "lon": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "address", "displayName", "lat", "lon", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}/savedAddresses/{addressId}": {
+      "schema": { "$ref": "#/entities/SavedAddress" },
+      "description": "Saved addresses isolated by user"
+    }
+  }
+}
