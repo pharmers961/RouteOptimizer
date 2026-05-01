@@ -282,7 +282,12 @@ export default function App() {
         // Return here because after login they'll have to click again, or we can handle it seamlessly.
         // For simplicity, let them click again after login or let it continue.
         return;
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.code === 'auth/unauthorized-domain') {
+          setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+        } else {
+          setError(err.message || 'Failed to sign in. Please allow popups.');
+        }
         return;
       }
     }
@@ -468,7 +473,12 @@ export default function App() {
                   if (!user) {
                     try {
                       await signInWithGoogle();
-                    } catch (e) {
+                    } catch (e: any) {
+                      if (e?.code === 'auth/unauthorized-domain') {
+                        setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+                      } else {
+                        setError(e.message || 'Failed to sign in. Please allow popups.');
+                      }
                       return;
                     }
                   }
@@ -489,7 +499,17 @@ export default function App() {
               ) : (
                 <button 
                   type="button"
-                  onClick={signInWithGoogle}
+                  onClick={async () => {
+                    try {
+                      await signInWithGoogle();
+                    } catch (e: any) {
+                      if (e?.code === 'auth/unauthorized-domain') {
+                         setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+                      } else {
+                         setError(e.message || 'Failed to sign in. Please allow popups.');
+                      }
+                    }
+                  }}
                   className="text-xs text-stone-500 hover:text-stone-700 flex items-center gap-1 transition-colors"
                 >
                   <LogIn className="w-3 h-3" /> Sign in to save
