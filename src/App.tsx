@@ -285,6 +285,8 @@ export default function App() {
       } catch (err: any) {
         if (err?.code === 'auth/unauthorized-domain') {
           setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+        } else if (err?.code === 'auth/popup-blocked') {
+          setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
         } else {
           setError(err.message || 'Failed to sign in. Please allow popups.');
         }
@@ -325,13 +327,44 @@ export default function App() {
 
   const isAddressSaved = (address: string) => savedAddresses.some(a => a.address === address);
 
-  const handleAddSavedToRoute = (addresses: SavedAddress[]) => {
-    const newLocations = addresses.map(addr => ({
-      ...addr,
-      id: uuidv4(),
-      type: 'stop' as const
-    }));
-    setLocations(prev => [...prev, ...newLocations]);
+  const handleAddSavedToRoute = (startAddress: SavedAddress | null, stopAddresses: SavedAddress[]) => {
+    let nextLocations = [...locations];
+    
+    if (startAddress) {
+      const existingEnd = nextLocations.find(l => l.type === 'end');
+      nextLocations = nextLocations.filter(loc => loc.type !== 'start' && loc.type !== 'end');
+      
+      const newStart = {
+        ...startAddress,
+        id: uuidv4(),
+        type: 'start' as const
+      };
+      
+      // Keep stops and the existing end
+      nextLocations = [newStart, ...nextLocations.filter(l => l.type === 'stop')];
+      if (existingEnd) {
+        nextLocations.push(existingEnd);
+      }
+    }
+    
+    if (stopAddresses.length > 0) {
+      const newLocations = stopAddresses.map(addr => ({
+        ...addr,
+        id: uuidv4(),
+        type: 'stop' as const
+      }));
+      
+      const start = nextLocations.find(l => l.type === 'start');
+      const end = nextLocations.find(l => l.type === 'end');
+      const stops = nextLocations.filter(l => l.type === 'stop');
+      
+      nextLocations = [];
+      if (start) nextLocations.push(start);
+      nextLocations.push(...stops, ...newLocations);
+      if (end) nextLocations.push(end);
+    }
+    
+    setLocations(nextLocations);
     setRouteResult(null);
   };
 
@@ -476,6 +509,8 @@ export default function App() {
                     } catch (e: any) {
                       if (e?.code === 'auth/unauthorized-domain') {
                         setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+                      } else if (e?.code === 'auth/popup-blocked') {
+                        setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
                       } else {
                         setError(e.message || 'Failed to sign in. Please allow popups.');
                       }
@@ -505,6 +540,8 @@ export default function App() {
                     } catch (e: any) {
                       if (e?.code === 'auth/unauthorized-domain') {
                          setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
+                      } else if (e?.code === 'auth/popup-blocked') {
+                         setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
                       } else {
                          setError(e.message || 'Failed to sign in. Please allow popups.');
                       }
