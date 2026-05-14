@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { MapPin, Navigation, Plus, Trash2, Route, ExternalLink, Loader2, Smartphone, LocateFixed, Sparkles, Bookmark, BookmarkPlus, LogIn, LogOut } from 'lucide-react';
-import { Location, geocode, autocompleteAddress, Suggestion, reverseGeocode } from './utils/geocoding';
+import { Navigation, Trash2, Route, ExternalLink, Smartphone, Bookmark, LogIn, LogOut } from 'lucide-react';
+import { Location, Suggestion } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
-import { guessCorrectAddress } from './utils/ai';
 import Map from './components/Map';
+import AddressFinder from './components/AddressFinder';
 import SavedAddressesModal, { SavedAddress } from './components/SavedAddressesModal';
 import { useAuth } from './components/AuthProvider';
-import { collection, query, onSnapshot, setDoc, deleteDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, query, onSnapshot, setDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db, signInWithGoogle, signOut, handleFirestoreError, OperationType } from './utils/firebase';
 
 export default function App() {
@@ -17,20 +17,11 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-  const [inputValue, setInputValue] = useState('');
   const [inputMode, setInputMode] = useState<'start' | 'end' | 'stop'>('start');
-  const [isGeocoding, setIsGeocoding] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
-  const [isLocating, setIsLocating] = useState(false);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
-  const [isGuessingAddress, setIsGuessingAddress] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [isAutocompleting, setIsAutocompleting] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [startEqualsEnd, setStartEqualsEnd] = useState(() => {
     const saved = localStorage.getItem('routeOptimizerStartEqualsEnd');
@@ -97,40 +88,12 @@ export default function App() {
     }
   }, [startEqualsEnd, inputMode]);
 
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    const fetchSuggestions = async () => {
-      if (inputValue.trim().length > 2) {
-        setIsAutocompleting(true);
-        const results = await autocompleteAddress(inputValue, startLoc?.lat, startLoc?.lon);
-        setSuggestions(results);
-        setShowSuggestions(true);
-        setIsAutocompleting(false);
-      } else {
-        setSuggestions([]);
-        setShowSuggestions(false);
-      }
-    };
-
-    const timeoutId = setTimeout(fetchSuggestions, 200);
-    return () => clearTimeout(timeoutId);
-  }, [inputValue]);
-
-  const handleSelectSuggestion = (suggestion: Suggestion) => {
-    if (inputMode === 'start' && locations.some(l => l.type === 'start')) {
+  const handlePickSuggestion = (suggestion: Suggestion, mode: 'start' | 'end' | 'stop') => {
+    if (mode === 'start' && locations.some(l => l.type === 'start')) {
       setError("Start location already exists. Remove it first.");
       return;
     }
-    if (inputMode === 'end' && locations.some(l => l.type === 'end')) {
+    if (mode === 'end' && locations.some(l => l.type === 'end')) {
       setError("End location already exists. Remove it first.");
       return;
     }
@@ -140,122 +103,15 @@ export default function App() {
       address: suggestion.displayName,
       lat: suggestion.lat,
       lon: suggestion.lon,
-      type: inputMode,
-      displayName: suggestion.displayName
+      type: mode,
+      displayName: suggestion.displayName,
     };
-    
+
     setLocations(prev => [...prev, newLocation]);
-    setInputValue('');
-    setSuggestions([]);
-    setShowSuggestions(false);
     setRouteResult(null);
     setError(null);
-    
-    if (inputMode === 'start') {
-      setInputMode('stop');
-    }
-  };
 
-  const handleAddLocation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputValue.trim()) return;
-
-    // Check if we already have a start or end
-    if (inputMode === 'start' && locations.some(l => l.type === 'start')) {
-      setError("Start location already exists. Remove it first.");
-      return;
-    }
-    if (inputMode === 'end' && locations.some(l => l.type === 'end')) {
-      setError("End location already exists. Remove it first.");
-      return;
-    }
-
-    setIsGeocoding(true);
-    setError(null);
-    let result = await geocode(inputValue, startLoc?.lat, startLoc?.lon);
-    
-    // If geocoding fails, try to guess the correct address with AI
-    if (!result) {
-      setIsGeocoding(false);
-      setIsGuessingAddress(true);
-      const guessedAddress = await guessCorrectAddress(inputValue);
-      setIsGuessingAddress(false);
-      
-      if (guessedAddress) {
-        setInputValue(guessedAddress); // Update input with guessed address
-        setIsGeocoding(true);
-        result = await geocode(guessedAddress, startLoc?.lat, startLoc?.lon);
-      }
-    }
-    
-    setIsGeocoding(false);
-
-    if (result) {
-      const newLocation: Location = {
-        id: uuidv4(),
-        address: result.displayName,
-        lat: result.lat,
-        lon: result.lon,
-        type: inputMode,
-        displayName: result.displayName
-      };
-      setLocations(prev => [...prev, newLocation]);
-      setInputValue('');
-      setRouteResult(null); // Reset route when locations change
-      
-      if (inputMode === 'start') {
-        setInputMode('stop');
-      }
-    } else {
-      setError("Could not find address. Please try checking the spelling.");
-    }
-  };
-
-  const handleGetCurrentLocation = () => {
-    if (inputMode === 'start' && locations.some(l => l.type === 'start')) {
-      setError("Start location already exists. Remove it first.");
-      return;
-    }
-    if (inputMode === 'end' && locations.some(l => l.type === 'end')) {
-      setError("End location already exists. Remove it first.");
-      return;
-    }
-
-    if (!navigator.geolocation) {
-      setError("Geolocation is not supported by your browser.");
-      return;
-    }
-
-    setIsLocating(true);
-    setError(null);
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        const addressName = await reverseGeocode(latitude, longitude) || "Current Location";
-        
-        const newLocation: Location = {
-          id: uuidv4(),
-          address: addressName,
-          lat: latitude,
-          lon: longitude,
-          type: inputMode,
-          displayName: addressName
-        };
-        
-        setLocations(prev => [...prev, newLocation]);
-        setInputValue('');
-        setRouteResult(null);
-        if (inputMode === 'start') setInputMode('stop');
-        setIsLocating(false);
-      },
-      (err) => {
-        console.error(err);
-        setError("Unable to retrieve your location. Please ensure permissions are granted.");
-        setIsLocating(false);
-      },
-      { enableHighAccuracy: true }
-    );
+    if (mode === 'start') setInputMode('stop');
   };
 
   const handleRemoveLocation = (id: string) => {
@@ -270,7 +126,6 @@ export default function App() {
   const handleClearAll = () => {
     setLocations([]);
     setRouteResult(null);
-    setInputValue('');
     setError(null);
     setInputMode('start');
   };
@@ -436,69 +291,15 @@ export default function App() {
         </div>
 
         <div className="p-6 md:flex-1 md:overflow-y-auto">
-          <form onSubmit={handleAddLocation} className="mb-6 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-1">Add Location</label>
-              <div className="flex gap-2 relative" ref={dropdownRef}>
-                <select 
-                  value={inputMode} 
-                  onChange={(e) => setInputMode(e.target.value as any)}
-                  className="bg-stone-50 border border-stone-200 text-stone-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600"
-                >
-                  <option value="start">Start</option>
-                  <option value="stop">Stop</option>
-                  {!startEqualsEnd && <option value="end">End</option>}
-                </select>
-                <div className="flex-1 relative">
-                  <input 
-                    type="text" 
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
-                    placeholder="Enter address..."
-                    className="w-full bg-stone-50 border border-stone-200 text-stone-900 rounded-lg px-3 py-2 pr-10 text-sm focus:outline-none focus:ring-2 focus:ring-amber-600 disabled:opacity-50"
-                  />
-                  {isAutocompleting ? (
-                    <div className="absolute right-3 top-2.5 text-stone-400">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    </div>
-                  ) : (
-                    <div className="absolute right-2 top-2 flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={handleGetCurrentLocation}
-                        disabled={isLocating}
-                        className="p-1 text-stone-400 hover:text-amber-600 transition-colors disabled:opacity-50"
-                        title="Use current location"
-                      >
-                        {isLocating ? <Loader2 className="w-4 h-4 animate-spin" /> : <LocateFixed className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  )}
-                  {showSuggestions && suggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-stone-200 rounded-lg shadow-lg z-50 max-h-60 overflow-y-auto">
-                      {suggestions.map((suggestion) => (
-                        <button
-                          key={suggestion.id}
-                          type="button"
-                          onClick={() => handleSelectSuggestion(suggestion)}
-                          className="w-full text-left px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 hover:text-amber-700 border-b border-stone-100 last:border-0 transition-colors"
-                        >
-                          {suggestion.displayName}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            <button 
-              type="submit" 
-              disabled={isGeocoding || isGuessingAddress || !inputValue.trim()}
-              className="w-full bg-amber-700 hover:bg-amber-800 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              {isGeocoding ? 'Searching...' : isGuessingAddress ? <><Sparkles className="w-4 h-4 animate-pulse text-amber-200" /> AI guessing address...</> : <><Plus className="w-4 h-4" /> Add Location</>}
-            </button>
+          <div className="mb-6 space-y-4">
+            <AddressFinder
+              mode={inputMode}
+              onModeChange={setInputMode}
+              showEndOption={!startEqualsEnd}
+              onPick={handlePickSuggestion}
+              nearLat={startLoc?.lat}
+              nearLon={startLoc?.lon}
+            />
             <div className="pt-2 flex justify-between items-center border-t border-stone-100">
               <button 
                 type="button"
@@ -554,7 +355,7 @@ export default function App() {
               )}
             </div>
             {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
-          </form>
+          </div>
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">

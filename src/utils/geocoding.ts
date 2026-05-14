@@ -1,5 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
-
 export interface Location {
   id: string;
   address: string;
@@ -12,108 +10,176 @@ export interface Location {
 export interface Suggestion {
   id: string;
   displayName: string;
+  primaryText: string;
+  secondaryText: string;
   lat: number;
   lon: number;
 }
 
+const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 
-export async function reverseGeocode(lat: number, lon: number): Promise<string | null> {
-  try {
-    const url = `https://photon.komoot.io/reverse?lon=${lon}&lat=${lat}`;
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    if (data?.features?.length > 0) {
-      return formatPhotonAddress(data.features[0].properties);
-    }
-    return null;
-  } catch (error) {
-    console.error("Reverse geocoding error:", error);
-    return null;
-  }
+interface NominatimAddress {
+  house_number?: string;
+  road?: string;
+  pedestrian?: string;
+  footway?: string;
+  cycleway?: string;
+  path?: string;
+  neighbourhood?: string;
+  suburb?: string;
+  city?: string;
+  town?: string;
+  village?: string;
+  hamlet?: string;
+  municipality?: string;
+  county?: string;
+  state?: string;
+  state_district?: string;
+  postcode?: string;
+  country?: string;
+  country_code?: string;
 }
 
-function formatPhotonAddress(props: any): string {
-  const parts = [];
-  
-  // Try to use house number + street as primary if available
-  let streetPart = '';
-  if (props.housenumber && props.street) {
-    streetPart = `${props.housenumber} ${props.street}`;
-  } else if (props.street) {
-    streetPart = props.street;
-  }
-
-  // If there's a name, use it, maybe combined with street
-  if (props.name) {
-    parts.push(props.name);
-    if (streetPart && !props.name.includes(props.street)) {
-      parts.push(streetPart);
-    }
-  } else if (streetPart) {
-    parts.push(streetPart);
-  }
-
-  const city = props.city || props.town || props.village || props.county;
-  if (city) parts.push(city);
-  
-  if (props.state) parts.push(props.state);
-  if (props.postcode) parts.push(props.postcode);
-  
-  return parts.join(', ') || 'Unknown location';
+interface NominatimResult {
+  place_id: number;
+  lat: string;
+  lon: string;
+  display_name: string;
+  name?: string;
+  type?: string;
+  class?: string;
+  address?: NominatimAddress;
+  importance?: number;
 }
 
-export async function autocompleteAddress(query: string, startLat?: number, startLon?: number): Promise<Suggestion[]> {
-  try {
-    const limit = 5;
-    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=${limit}`;
-    
-    // Add location bias if available
-    if (startLat !== undefined && startLon !== undefined) {
-      url += `&lat=${startLat}&lon=${startLon}`;
-    }
-    
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    if (data?.features?.length > 0) {
-      return data.features.map((f: any) => ({
-        id: (f.properties.osm_id || Math.random()).toString(),
-        displayName: formatPhotonAddress(f.properties),
-        lat: f.geometry.coordinates[1],
-        lon: f.geometry.coordinates[0]
-      }));
-    }
-    return [];
-  } catch (error) {
-    console.error("Autocomplete error:", error);
-    return [];
-  }
+function pickStreet(addr: NominatimAddress): string | undefined {
+  return addr.road || addr.pedestrian || addr.footway || addr.cycleway || addr.path;
 }
 
-export async function geocode(query: string, startLat?: number, startLon?: number): Promise<{ lat: number; lon: number; displayName: string } | null> {
+function pickCity(addr: NominatimAddress): string | undefined {
+  return addr.city || addr.town || addr.village || addr.hamlet || addr.municipality || addr.suburb || addr.neighbourhood || addr.county;
+}
+
+function buildTexts(result: NominatimResult): { primaryText: string; secondaryText: string; displayName: string } {
+  const addr = result.address || {};
+  const street = pickStreet(addr);
+  const city = pickCity(addr);
+  const state = addr.state || addr.state_district;
+  const country = addr.country;
+
+  let primaryText: string;
+  if (addr.house_number && street) {
+    primaryText = `${addr.house_number} ${street}`;
+  } else if (street) {
+    primaryText = street;
+  } else if (result.name) {
+    primaryText = result.name;
+  } else {
+    // Fall back to the first comma-separated chunk of the display_name
+    primaryText = result.display_name.split(',')[0].trim();
+  }
+
+  // If the primary is a POI/name distinct from the street, prepend the POI
+  if (result.name && street && !primaryText.includes(result.name)) {
+    primaryText = `${result.name} · ${primaryText}`;
+  }
+
+  const secondaryParts: string[] = [];
+  if (city) secondaryParts.push(city);
+  if (state && state !== city) secondaryParts.push(state);
+  if (addr.postcode) secondaryParts.push(addr.postcode);
+  if (country) secondaryParts.push(country);
+  const secondaryText = secondaryParts.join(', ');
+
+  const displayName = secondaryText ? `${primaryText}, ${secondaryText}` : primaryText;
+  return { primaryText, secondaryText, displayName };
+}
+
+async function nominatimFetch(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<any> {
+  const url = new URL(`${NOMINATIM_BASE}${path}`);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('addressdetails', '1');
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+
+  const response = await fetch(url.toString(), {
+    signal,
+    headers: { 'Accept': 'application/json' },
+  });
+  if (!response.ok) throw new Error(`Geocoder responded ${response.status}`);
+  return response.json();
+}
+
+export interface SearchOptions {
+  signal?: AbortSignal;
+  limit?: number;
+  // Bias results toward this point (preferred area)
+  nearLat?: number;
+  nearLon?: number;
+}
+
+export async function searchAddresses(query: string, opts: SearchOptions = {}): Promise<Suggestion[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 3) return [];
+
   try {
-    let url = `https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=1`;
-    
-    if (startLat !== undefined && startLon !== undefined) {
-      url += `&lat=${startLat}&lon=${startLon}`;
+    const params: Record<string, string> = {
+      q: trimmed,
+      limit: String(opts.limit ?? 6),
+      'accept-language': navigator.language || 'en',
+    };
+
+    // Soft bias: 0.5° box around the start point so results near home rank higher.
+    if (typeof opts.nearLat === 'number' && typeof opts.nearLon === 'number') {
+      const d = 0.5;
+      params.viewbox = `${opts.nearLon - d},${opts.nearLat + d},${opts.nearLon + d},${opts.nearLat - d}`;
+      params.bounded = '0';
     }
 
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    if (data?.features?.length > 0) {
-      const f = data.features[0];
+    const data = (await nominatimFetch('/search', params, opts.signal)) as NominatimResult[];
+    if (!Array.isArray(data)) return [];
+
+    return data.map((r) => {
+      const { primaryText, secondaryText, displayName } = buildTexts(r);
       return {
-        lat: f.geometry.coordinates[1],
-        lon: f.geometry.coordinates[0],
-        displayName: formatPhotonAddress(f.properties)
+        id: String(r.place_id),
+        primaryText,
+        secondaryText,
+        displayName,
+        lat: parseFloat(r.lat),
+        lon: parseFloat(r.lon),
       };
-    }
-    return null;
-  } catch (error) {
-    console.error("Geocoding error:", error);
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') throw error;
+    console.error('Address search error:', error);
+    return [];
+  }
+}
+
+export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<string | null> {
+  try {
+    const data = (await nominatimFetch('/reverse', {
+      lat: String(lat),
+      lon: String(lon),
+      'accept-language': navigator.language || 'en',
+    }, signal)) as NominatimResult | { error: string };
+
+    if ('error' in data) return null;
+    const { displayName } = buildTexts(data);
+    return displayName || null;
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return null;
+    console.error('Reverse geocoding error:', error);
     return null;
   }
 }
 
+export async function geocode(
+  query: string,
+  nearLat?: number,
+  nearLon?: number,
+  signal?: AbortSignal,
+): Promise<Suggestion | null> {
+  const results = await searchAddresses(query, { nearLat, nearLon, limit: 1, signal });
+  return results[0] || null;
+}
