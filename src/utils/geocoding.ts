@@ -16,7 +16,12 @@ export interface Suggestion {
   lon: number;
 }
 
-const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
+// Geocoder is Nominatim-compatible. Override to a paid mirror (LocationIQ,
+// Geoapify, Maptiler, self-hosted Nominatim) by setting VITE_GEOCODER_BASE_URL
+// and optionally VITE_GEOCODER_API_KEY at build time.
+const GEOCODER_BASE = (import.meta.env.VITE_GEOCODER_BASE_URL as string | undefined)?.replace(/\/+$/, '')
+  || 'https://nominatim.openstreetmap.org';
+const GEOCODER_KEY = import.meta.env.VITE_GEOCODER_API_KEY as string | undefined;
 
 interface NominatimAddress {
   house_number?: string;
@@ -75,11 +80,9 @@ function buildTexts(result: NominatimResult): { primaryText: string; secondaryTe
   } else if (result.name) {
     primaryText = result.name;
   } else {
-    // Fall back to the first comma-separated chunk of the display_name
     primaryText = result.display_name.split(',')[0].trim();
   }
 
-  // If the primary is a POI/name distinct from the street, prepend the POI
   if (result.name && street && !primaryText.includes(result.name)) {
     primaryText = `${result.name} · ${primaryText}`;
   }
@@ -95,10 +98,23 @@ function buildTexts(result: NominatimResult): { primaryText: string; secondaryTe
   return { primaryText, secondaryText, displayName };
 }
 
-async function nominatimFetch(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<any> {
-  const url = new URL(`${NOMINATIM_BASE}${path}`);
+function toSuggestion(result: NominatimResult): Suggestion {
+  const { primaryText, secondaryText, displayName } = buildTexts(result);
+  return {
+    id: String(result.place_id),
+    primaryText,
+    secondaryText,
+    displayName,
+    lat: parseFloat(result.lat),
+    lon: parseFloat(result.lon),
+  };
+}
+
+async function geocoderFetch(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<any> {
+  const url = new URL(`${GEOCODER_BASE}${path}`);
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('addressdetails', '1');
+  if (GEOCODER_KEY) url.searchParams.set('key', GEOCODER_KEY);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
   const response = await fetch(url.toString(), {
@@ -112,7 +128,6 @@ async function nominatimFetch(path: string, params: Record<string, string>, sign
 export interface SearchOptions {
   signal?: AbortSignal;
   limit?: number;
-  // Bias results toward this point (preferred area)
   nearLat?: number;
   nearLon?: number;
 }
@@ -128,27 +143,15 @@ export async function searchAddresses(query: string, opts: SearchOptions = {}): 
       'accept-language': navigator.language || 'en',
     };
 
-    // Soft bias: 0.5° box around the start point so results near home rank higher.
     if (typeof opts.nearLat === 'number' && typeof opts.nearLon === 'number') {
       const d = 0.5;
       params.viewbox = `${opts.nearLon - d},${opts.nearLat + d},${opts.nearLon + d},${opts.nearLat - d}`;
       params.bounded = '0';
     }
 
-    const data = (await nominatimFetch('/search', params, opts.signal)) as NominatimResult[];
+    const data = (await geocoderFetch('/search', params, opts.signal)) as NominatimResult[];
     if (!Array.isArray(data)) return [];
-
-    return data.map((r) => {
-      const { primaryText, secondaryText, displayName } = buildTexts(r);
-      return {
-        id: String(r.place_id),
-        primaryText,
-        secondaryText,
-        displayName,
-        lat: parseFloat(r.lat),
-        lon: parseFloat(r.lon),
-      };
-    });
+    return data.map(toSuggestion);
   } catch (error: any) {
     if (error?.name === 'AbortError') throw error;
     console.error('Address search error:', error);
@@ -156,17 +159,21 @@ export async function searchAddresses(query: string, opts: SearchOptions = {}): 
   }
 }
 
-export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<string | null> {
+export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<Suggestion | null> {
   try {
-    const data = (await nominatimFetch('/reverse', {
+    const data = (await geocoderFetch('/reverse', {
       lat: String(lat),
       lon: String(lon),
       'accept-language': navigator.language || 'en',
     }, signal)) as NominatimResult | { error: string };
 
-    if ('error' in data) return null;
-    const { displayName } = buildTexts(data);
-    return displayName || null;
+    if (!data || 'error' in data) return null;
+    // Reverse responses sometimes omit place_id; synthesize a stable id from coords.
+    const result: NominatimResult = {
+      ...data,
+      place_id: data.place_id ?? Math.round(lat * 1e6) * 1e6 + Math.round(lon * 1e6),
+    };
+    return toSuggestion(result);
   } catch (error: any) {
     if (error?.name === 'AbortError') return null;
     console.error('Reverse geocoding error:', error);

@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { LocateFixed, Loader2, MapPin, Search, Sparkles, AlertCircle } from 'lucide-react';
 import { Suggestion, searchAddresses, reverseGeocode, geocode } from '../utils/geocoding';
-import { guessCorrectAddress } from '../utils/ai';
+
+// Lazy-import the Gemini SDK so it isn't bundled in the main chunk; it's only
+// needed when AI assist actually fires.
+async function aiGuess(input: string): Promise<string | null> {
+  const { guessCorrectAddress } = await import('../utils/ai');
+  return guessCorrectAddress(input);
+}
 
 type Mode = 'start' | 'end' | 'stop';
 
@@ -141,7 +147,7 @@ export default function AddressFinder({
 
     if (!result) {
       setAiGuessing(true);
-      const guess = await guessCorrectAddress(trimmed);
+      const guess = await aiGuess(trimmed);
       setAiGuessing(false);
       if (guess) {
         setQuery(guess);
@@ -163,7 +169,7 @@ export default function AddressFinder({
     if (!trimmed) return;
     setError(null);
     setAiGuessing(true);
-    const guess = await guessCorrectAddress(trimmed);
+    const guess = await aiGuess(trimmed);
     setAiGuessing(false);
     if (guess && guess !== trimmed) {
       setQuery(guess);
@@ -182,12 +188,12 @@ export default function AddressFinder({
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
-        const name = (await reverseGeocode(latitude, longitude)) || 'Current Location';
-        pick({
+        const reversed = await reverseGeocode(latitude, longitude);
+        pick(reversed ?? {
           id: `current-${Date.now()}`,
-          displayName: name,
-          primaryText: name.split(',')[0],
-          secondaryText: name.split(',').slice(1).join(',').trim(),
+          displayName: 'Current Location',
+          primaryText: 'Current Location',
+          secondaryText: `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`,
           lat: latitude,
           lon: longitude,
         });

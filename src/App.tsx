@@ -1,14 +1,87 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Navigation, Trash2, Route, ExternalLink, Smartphone, Bookmark, LogIn, LogOut } from 'lucide-react';
+import { Navigation, Trash2, Route, ExternalLink, Smartphone, Bookmark, LogIn, LogOut, GripVertical, Loader2 } from 'lucide-react';
 import { Location, Suggestion } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
-import Map from './components/Map';
 import AddressFinder from './components/AddressFinder';
-import SavedAddressesModal, { SavedAddress } from './components/SavedAddressesModal';
+import { SavedAddress } from './components/SavedAddressesModal';
 import { useAuth } from './components/AuthProvider';
 import { collection, query, onSnapshot, setDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { db, signInWithGoogle, signOut, handleFirestoreError, OperationType } from './utils/firebase';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Map (Leaflet ~140KB) and SavedAddressesModal load on demand to slim the
+// initial bundle. Aliased to RouteMap to avoid shadowing the global Map.
+const RouteMap = lazy(() => import('./components/Map'));
+const SavedAddressesModal = lazy(() => import('./components/SavedAddressesModal'));
+
+type InputMode = 'start' | 'end' | 'stop';
+
+interface SortableStopProps {
+  loc: Location;
+  index: number;
+  isSaved: boolean;
+  onToggleSave: (loc: Location) => void;
+  onOpen: (loc: Location) => void;
+  onRemove: (id: string) => void;
+}
+
+function SortableStop({ loc, index, isSaved, onToggleSave, onOpen, onRemove }: SortableStopProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: loc.id });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className="flex items-start justify-between gap-2 text-sm text-stone-700 border-t border-stone-200 pt-2 first:border-0 first:pt-0 bg-stone-50"
+    >
+      <div className="flex items-start gap-1 min-w-0 flex-1">
+        <button
+          type="button"
+          className="text-stone-400 hover:text-stone-700 cursor-grab active:cursor-grabbing touch-none p-1 -ml-1"
+          aria-label="Drag to reorder"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+        <span className="text-stone-400 font-mono mt-1">{index + 1}.</span>
+        <span className="break-words min-w-0">{loc.address}</span>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <button onClick={() => onToggleSave(loc)} className={`transition-colors ${isSaved ? 'text-amber-600' : 'text-stone-400 hover:text-amber-600'}`} title={isSaved ? 'Remove from saved' : 'Save this address'}>
+          <Bookmark className="w-4 h-4" fill={isSaved ? 'currentColor' : 'none'} />
+        </button>
+        <button onClick={() => onOpen(loc)} className="text-stone-400 hover:text-amber-600" title="Send to phone / Open in Maps">
+          <Smartphone className="w-4 h-4" />
+        </button>
+        <button onClick={() => onRemove(loc.id)} className="text-stone-400 hover:text-red-500" title="Remove">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </li>
+  );
+}
 
 export default function App() {
   const { user } = useAuth();
@@ -17,7 +90,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
   const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
-  const [inputMode, setInputMode] = useState<'start' | 'end' | 'stop'>('start');
+  const [inputMode, setInputMode] = useState<InputMode>(() => {
+    const saved = localStorage.getItem('routeOptimizerInputMode');
+    return (saved === 'start' || saved === 'stop' || saved === 'end') ? saved : 'start';
+  });
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
@@ -36,6 +112,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('routeOptimizerStartEqualsEnd', JSON.stringify(startEqualsEnd));
   }, [startEqualsEnd]);
+
+  useEffect(() => {
+    localStorage.setItem('routeOptimizerInputMode', inputMode);
+  }, [inputMode]);
 
   useEffect(() => {
     if (!user) {
@@ -57,6 +137,22 @@ export default function App() {
 
     return () => unsubscribe();
   }, [user]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleStopsDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const source = routeResult ? routeResult.optimizedLocations : locations;
+    const currentIds = source.filter(l => l.type === 'stop').map(l => l.id);
+    const oldIndex = currentIds.indexOf(String(active.id));
+    const newIndex = currentIds.indexOf(String(over.id));
+    if (oldIndex < 0 || newIndex < 0) return;
+    handleReorderStops(arrayMove(currentIds, oldIndex, newIndex));
+  };
 
   const startLoc = locations.find(l => l.type === 'start');
   const endLoc = locations.find(l => l.type === 'end');
@@ -128,6 +224,21 @@ export default function App() {
     setRouteResult(null);
     setError(null);
     setInputMode('start');
+  };
+
+  const handleReorderStops = (orderedIds: string[]) => {
+    setLocations(prev => {
+      const byId = new Map(prev.map(l => [l.id, l]));
+      const reorderedStops = orderedIds.map(id => byId.get(id)).filter((l): l is Location => !!l && l.type === 'stop');
+      const start = prev.find(l => l.type === 'start');
+      const end = prev.find(l => l.type === 'end');
+      const next: Location[] = [];
+      if (start) next.push(start);
+      next.push(...reorderedStops);
+      if (end) next.push(end);
+      return next;
+    });
+    setRouteResult(null);
   };
 
   const handleToggleSaveAddress = async (loc: Location) => {
@@ -412,27 +523,23 @@ export default function App() {
                 <span className="text-xs font-bold text-amber-700 uppercase">Stops ({displayStopLocs.length})</span>
               </div>
               {displayStopLocs.length > 0 ? (
-                <ul className="space-y-2">
-                  {displayStopLocs.map((loc, i) => (
-                    <li key={loc.id} className="flex items-start justify-between gap-2 text-sm text-stone-700 border-t border-stone-200 pt-2 first:border-0 first:pt-0">
-                      <div className="flex items-start gap-2">
-                        <span className="text-stone-400 font-mono">{i + 1}.</span>
-                        <span>{loc.address}</span>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button onClick={() => handleToggleSaveAddress(loc)} className={`transition-colors ${isAddressSaved(loc.address) ? 'text-amber-600' : 'text-stone-400 hover:text-amber-600'}`} title={isAddressSaved(loc.address) ? "Remove from saved" : "Save this address"}>
-                          <Bookmark className="w-4 h-4" fill={isAddressSaved(loc.address) ? "currentColor" : "none"} />
-                        </button>
-                        <button onClick={() => handleOpenSingleLocation(loc)} className="text-stone-400 hover:text-amber-600" title="Send to phone / Open in Maps">
-                          <Smartphone className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => handleRemoveLocation(loc.id)} className="text-stone-400 hover:text-red-500" title="Remove">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleStopsDragEnd}>
+                  <SortableContext items={displayStopLocs.map(l => l.id)} strategy={verticalListSortingStrategy}>
+                    <ul className="space-y-2">
+                      {displayStopLocs.map((loc, i) => (
+                        <SortableStop
+                          key={loc.id}
+                          loc={loc}
+                          index={i}
+                          isSaved={isAddressSaved(loc.address)}
+                          onToggleSave={handleToggleSaveAddress}
+                          onOpen={handleOpenSingleLocation}
+                          onRemove={handleRemoveLocation}
+                        />
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </DndContext>
               ) : (
                 <p className="text-sm text-stone-400 italic">No stops added</p>
               )}
@@ -493,19 +600,29 @@ export default function App() {
 
       {/* Map Area */}
       <div className="w-full h-[300px] md:h-full md:flex-1 relative bg-stone-200">
-        <Map 
-          locations={routeResult ? routeResult.optimizedLocations : locations} 
-          routeGeometry={routeResult?.geometry || null} 
-        />
+        <Suspense fallback={
+          <div className="w-full h-full flex items-center justify-center text-stone-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        }>
+          <RouteMap
+            locations={routeResult ? routeResult.optimizedLocations : locations}
+            routeGeometry={routeResult?.geometry || null}
+          />
+        </Suspense>
       </div>
-      
-      <SavedAddressesModal 
-        isOpen={isSavedModalOpen} 
-        onClose={() => setIsSavedModalOpen(false)} 
-        savedAddresses={savedAddresses}
-        onAddSelected={handleAddSavedToRoute}
-        onRemoveSaved={handleRemoveSavedAddress}
-      />
+
+      {isSavedModalOpen && (
+        <Suspense fallback={null}>
+          <SavedAddressesModal
+            isOpen={isSavedModalOpen}
+            onClose={() => setIsSavedModalOpen(false)}
+            savedAddresses={savedAddresses}
+            onAddSelected={handleAddSavedToRoute}
+            onRemoveSaved={handleRemoveSavedAddress}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
