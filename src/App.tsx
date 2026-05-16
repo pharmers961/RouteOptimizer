@@ -6,8 +6,7 @@ import { optimizeRoute, RouteResult } from './utils/routing';
 import AddressFinder from './components/AddressFinder';
 import { SavedAddress } from './components/SavedAddressesModal';
 import { useAuth } from './components/AuthProvider';
-import { collection, query, onSnapshot, setDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
-import { db, signInWithGoogle, signOut, handleFirestoreError, OperationType } from './utils/firebase';
+import { supabase, signInWithGoogle, signOut, OperationType, logSupabaseError } from './utils/supabase';
 import {
   DndContext,
   closestCenter,
@@ -123,19 +122,59 @@ export default function App() {
       return;
     }
 
-    const path = `users/${user.uid}/savedAddresses`;
-    const q = query(collection(db, path));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const addrs: SavedAddress[] = [];
-      snapshot.forEach(doc => {
-        addrs.push(doc.data() as SavedAddress);
-      });
-      setSavedAddresses(addrs);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
+    let cancelled = false;
+    const rowToAddress = (row: any): SavedAddress => ({
+      id: row.id,
+      address: row.address,
+      displayName: row.display_name ?? row.address,
+      lat: row.lat,
+      lon: row.lon,
     });
 
-    return () => unsubscribe();
+    supabase
+      .from('saved_addresses')
+      .select('id, address, display_name, lat, lon')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          logSupabaseError(error, OperationType.LIST, 'saved_addresses');
+          return;
+        }
+        setSavedAddresses((data ?? []).map(rowToAddress));
+      });
+
+    const channel = supabase
+      .channel(`saved_addresses:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'saved_addresses', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          if (cancelled) return;
+          setSavedAddresses((prev) => {
+            if (payload.eventType === 'INSERT') {
+              const row = rowToAddress(payload.new);
+              return prev.some((a) => a.id === row.id) ? prev : [row, ...prev];
+            }
+            if (payload.eventType === 'UPDATE') {
+              const row = rowToAddress(payload.new);
+              return prev.map((a) => (a.id === row.id ? row : a));
+            }
+            if (payload.eventType === 'DELETE') {
+              const id = (payload.old as any)?.id;
+              return prev.filter((a) => a.id !== id);
+            }
+            return prev;
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
   }, [user]);
 
   const sensors = useSensors(
@@ -245,49 +284,39 @@ export default function App() {
     if (!user) {
       try {
         await signInWithGoogle();
-        // Return here because after login they'll have to click again, or we can handle it seamlessly.
-        // For simplicity, let them click again after login or let it continue.
         return;
       } catch (err: any) {
-        if (err?.code === 'auth/unauthorized-domain') {
-          setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
-        } else if (err?.code === 'auth/popup-blocked') {
-          setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
-        } else {
-          setError(err.message || 'Failed to sign in. Please allow popups.');
-        }
+        setError(err?.message || 'Failed to sign in.');
         return;
       }
     }
 
-    const isSaved = savedAddresses.some(a => a.address === loc.address);
-    if (isSaved) {
-      const savedNode = savedAddresses.find(a => a.address === loc.address);
-      if (savedNode) {
-        const docRef = doc(db, `users/${user.uid}/savedAddresses/${savedNode.id}`);
-        try {
-          await deleteDoc(docRef);
-        } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/savedAddresses/${savedNode.id}`);
-        }
+    const existing = savedAddresses.find(a => a.address === loc.address);
+    if (existing) {
+      const { error: err } = await supabase
+        .from('saved_addresses')
+        .delete()
+        .eq('id', existing.id)
+        .eq('user_id', user.id);
+      if (err) {
+        logSupabaseError(err, OperationType.DELETE, 'saved_addresses');
+        setError('Could not remove saved address.');
       }
-    } else {
-      const newId = uuidv4();
-      const docRef = doc(db, `users/${user.uid}/savedAddresses/${newId}`);
-      try {
-        await setDoc(docRef, {
-          id: newId,
-          userId: user.uid,
-          address: loc.address,
-          displayName: loc.displayName || loc.address,
-          lat: loc.lat,
-          lon: loc.lon,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `users/${user.uid}/savedAddresses/${newId}`);
-      }
+      return;
+    }
+
+    const newId = uuidv4();
+    const { error: err } = await supabase.from('saved_addresses').insert({
+      id: newId,
+      user_id: user.id,
+      address: loc.address,
+      display_name: loc.displayName || loc.address,
+      lat: loc.lat,
+      lon: loc.lon,
+    });
+    if (err) {
+      logSupabaseError(err, OperationType.CREATE, 'saved_addresses');
+      setError('Could not save address.');
     }
   };
 
@@ -336,11 +365,14 @@ export default function App() {
 
   const handleRemoveSavedAddress = async (id: string) => {
     if (!user) return;
-    const docRef = doc(db, `users/${user.uid}/savedAddresses/${id}`);
-    try {
-      await deleteDoc(docRef);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/savedAddresses/${id}`);
+    const { error: err } = await supabase
+      .from('saved_addresses')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', user.id);
+    if (err) {
+      logSupabaseError(err, OperationType.DELETE, 'saved_addresses');
+      setError('Could not remove saved address.');
     }
   };
 
@@ -412,20 +444,14 @@ export default function App() {
               nearLon={startLoc?.lon}
             />
             <div className="pt-2 flex justify-between items-center border-t border-stone-100">
-              <button 
+              <button
                 type="button"
                 onClick={async () => {
                   if (!user) {
                     try {
                       await signInWithGoogle();
                     } catch (e: any) {
-                      if (e?.code === 'auth/unauthorized-domain') {
-                        setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
-                      } else if (e?.code === 'auth/popup-blocked') {
-                        setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
-                      } else {
-                        setError(e.message || 'Failed to sign in. Please allow popups.');
-                      }
+                      setError(e?.message || 'Failed to start sign-in.');
                       return;
                     }
                   }
@@ -444,19 +470,13 @@ export default function App() {
                   <LogOut className="w-3 h-3" /> Sign out
                 </button>
               ) : (
-                <button 
+                <button
                   type="button"
                   onClick={async () => {
                     try {
                       await signInWithGoogle();
                     } catch (e: any) {
-                      if (e?.code === 'auth/unauthorized-domain') {
-                         setError('Your website domain needs to be added to Firebase Console -> Authentication -> Settings -> Authorized Domains.');
-                      } else if (e?.code === 'auth/popup-blocked') {
-                         setError('Sign-in pop-up was blocked by your browser. Please allow pop-ups for this site to sign in.');
-                      } else {
-                         setError(e.message || 'Failed to sign in. Please allow popups.');
-                      }
+                      setError(e?.message || 'Failed to start sign-in.');
                     }
                   }}
                   className="text-xs text-stone-500 hover:text-stone-700 flex items-center gap-1 transition-colors"

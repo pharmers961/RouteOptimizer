@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, onAuthStateChanged } from 'firebase/auth';
-import { auth, db } from '../utils/firebase';
-import { doc, getDocFromServer } from 'firebase/firestore';
+import { supabase, User } from '../utils/supabase';
 
 interface AuthContextType {
   user: User | null;
@@ -15,23 +13,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if(error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        }
-      }
-    }
-    testConnection();
-
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   return (
