@@ -12,8 +12,9 @@ A multi-stop route optimizer with AI-assisted address search, drag-to-reorder st
 
 1. `npm install`
 2. Copy `.env.example` to `.env.local` and fill in:
-   - `GEMINI_API_KEY` — for the AI address-assist fallback
+   - `VITE_MAPBOX_TOKEN` — for accurate address search (see "Geocoder" below)
    - `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` — for auth + saved addresses
+   - `GEMINI_API_KEY` — optional, for the AI address-assist fallback
 3. `npm run dev`
 
 ## Supabase setup
@@ -35,6 +36,14 @@ A multi-stop route optimizer with AI-assisted address search, drag-to-reorder st
    - (optional) `VITE_GEOCODER_BASE_URL`, `VITE_GEOCODER_API_KEY`, `VITE_GEMINI_MODEL`
 4. Trigger a deploy. Once live, add the Netlify URL to Supabase's allowed redirect URLs (Authentication → URL Configuration).
 
-## Optional: paid geocoder
+## Geocoder
 
-The default geocoder is the public Nominatim instance, which is rate-limited to ~1 req/sec/IP and not meant for production traffic. Set `VITE_GEOCODER_BASE_URL` (and optionally `VITE_GEOCODER_API_KEY`) to swap to a Nominatim-compatible provider like LocationIQ or Geoapify.
+Address search uses **Mapbox** when `VITE_MAPBOX_TOKEN` is set — it has real US address coverage with house-number interpolation and autocomplete-grade ranking. This is strongly recommended; without it, search quality on residential addresses is poor.
+
+1. Create a free account at [mapbox.com](https://account.mapbox.com/auth/signup/).
+2. Copy your **default public token** (starts with `pk.`) from [account.mapbox.com/access-tokens](https://account.mapbox.com/access-tokens/).
+3. Set it as `VITE_MAPBOX_TOKEN` locally (`.env.local`) and in Netlify's environment variables.
+
+The free tier covers 100k geocoding requests/month, no billing required to start.
+
+**Fallback:** if `VITE_MAPBOX_TOKEN` is unset, the app uses the keyless public Nominatim (OpenStreetMap) instance. It works without signup but has weak US residential coverage and is rate-limited to ~1 req/sec/IP. You can point the fallback at a Nominatim-compatible mirror (LocationIQ, Geoapify) via `VITE_GEOCODER_BASE_URL` / `VITE_GEOCODER_API_KEY`.

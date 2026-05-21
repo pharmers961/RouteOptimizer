@@ -4,6 +4,7 @@ declare module '*.png' {
 }
 
 interface ImportMetaEnv {
+  readonly VITE_MAPBOX_TOKEN?: string;
   readonly VITE_GEOCODER_BASE_URL?: string;
   readonly VITE_GEOCODER_API_KEY?: string;
   readonly VITE_GEMINI_MODEL?: string;
