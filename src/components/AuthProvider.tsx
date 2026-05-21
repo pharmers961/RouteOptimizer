@@ -13,17 +13,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      setLoading(false);
-    });
+    let active = true;
+
+    supabase.auth.getSession()
+      .then(({ data }) => { if (active) setUser(data.session?.user ?? null); })
+      .catch((err) => { console.error('Auth init failed:', err); })
+      .finally(() => { if (active) setLoading(false); });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
       setUser(session?.user ?? null);
       setLoading(false);
     });
 
-    return () => sub.subscription.unsubscribe();
+    return () => { active = false; sub.subscription.unsubscribe(); };
   }, []);
 
   return (

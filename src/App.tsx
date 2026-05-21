@@ -6,7 +6,7 @@ import { optimizeRoute, RouteResult } from './utils/routing';
 import AddressFinder from './components/AddressFinder';
 import { SavedAddress } from './components/SavedAddressesModal';
 import { useAuth } from './components/AuthProvider';
-import { supabase, signInWithGoogle, signOut, OperationType, logSupabaseError } from './utils/supabase';
+import { supabase, signInWithGoogle, signOut, OperationType, logSupabaseError, isSupabaseConfigured } from './utils/supabase';
 import {
   DndContext,
   closestCenter,
@@ -446,6 +446,13 @@ export default function App() {
         </div>
 
         <div className="p-6 md:flex-1 md:overflow-y-auto">
+          {!isSupabaseConfigured && (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              Sign-in and saved addresses are unavailable: the Supabase config is missing or invalid.
+              Set <code className="font-mono">VITE_SUPABASE_URL</code> (must be <code className="font-mono">https://…supabase.co</code>)
+              and <code className="font-mono">VITE_SUPABASE_ANON_KEY</code>, then redeploy.
+            </div>
+          )}
           <div className="mb-6 space-y-4">
             <AddressFinder
               mode={inputMode}

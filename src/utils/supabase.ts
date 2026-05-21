@@ -1,21 +1,39 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Tolerate accidental quotes / whitespace / missing scheme in the env value,
+// and validate before handing it to createClient — an invalid URL otherwise
+// throws synchronously and white-screens the whole app.
+function normalizeUrl(raw?: string): string | null {
+  if (!raw) return null;
+  let v = raw.trim().replace(/^["']|["']$/g, '').trim();
+  if (!v) return null;
+  if (!/^https?:\/\//i.test(v)) v = `https://${v}`;
+  try {
+    const url = new URL(v);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // Fail loudly during local dev; in prod the deploy will already have
-  // surfaced the env vars on Netlify before running the build.
+const SUPABASE_URL = normalizeUrl(import.meta.env.VITE_SUPABASE_URL);
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined)?.trim() || undefined;
+
+export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+if (!isSupabaseConfigured) {
   // eslint-disable-next-line no-console
   console.warn(
-    'Supabase is not configured: set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. ' +
-      'Auth and saved-addresses features will be disabled until configured.',
+    'Supabase is not configured (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing or invalid). ' +
+      'Sign-in and saved addresses are disabled until set. The URL must look like https://xxxx.supabase.co.',
   );
 }
 
+// Use a syntactically valid placeholder when unconfigured so createClient never
+// throws; calls simply fail and isSupabaseConfigured gates the auth UI.
 export const supabase: SupabaseClient = createClient(
-  SUPABASE_URL ?? 'http://invalid.local',
-  SUPABASE_ANON_KEY ?? 'invalid-anon-key',
+  SUPABASE_URL ?? 'https://placeholder.supabase.co',
+  SUPABASE_ANON_KEY ?? 'placeholder-anon-key',
   {
     auth: {
       persistSession: true,
@@ -24,8 +42,6 @@ export const supabase: SupabaseClient = createClient(
     },
   },
 );
-
-export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 export async function signInWithGoogle(): Promise<void> {
   const { error } = await supabase.auth.signInWithOAuth({

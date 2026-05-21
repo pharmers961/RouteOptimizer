@@ -4,6 +4,11 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # These keys are intentionally public — Vite inlines VITE_* (and the Gemini
+  # key) into the browser bundle. Tell Netlify's secret scanner not to fail the
+  # build when it finds them in the output. (Supabase anon key = RLS-protected;
+  # Mapbox pk token = URL-restricted.)
+  SECRETS_SCAN_OMIT_KEYS = "VITE_SUPABASE_URL,VITE_SUPABASE_ANON_KEY,VITE_MAPBOX_TOKEN,VITE_MAPBOX_MONTHLY_BUDGET,GEMINI_API_KEY"
 
 # SPA fallback: every unknown path serves index.html so React routes resolve
 # client-side.
