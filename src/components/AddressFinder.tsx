@@ -22,7 +22,7 @@ export interface AddressFinderProps {
   disabledModes?: Mode[];
 }
 
-const DEBOUNCE_MS = 300;
+const DEBOUNCE_MS = 400;
 const MIN_QUERY_LEN = 3;
 
 export default function AddressFinder({

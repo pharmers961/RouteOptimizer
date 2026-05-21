@@ -41,6 +41,56 @@ function lang(): string {
   return (typeof navigator !== 'undefined' && navigator.language) ? navigator.language.split('-')[0] : 'en';
 }
 
+// --- Cost guardrails --------------------------------------------------------
+// Mapbox's free tier is 100k geocoding requests/month (account-wide). To make
+// sure we never approach it: (1) cache results so repeated/edited queries
+// don't re-hit the API, and (2) enforce a hard per-browser monthly budget that
+// falls back to keyless Nominatim once reached. Default budget is deliberately
+// well under the free tier; override with VITE_MAPBOX_MONTHLY_BUDGET.
+
+const MONTHLY_BUDGET = Number(import.meta.env.VITE_MAPBOX_MONTHLY_BUDGET) || 25000;
+const BUDGET_KEY = 'geocoderMonthlyBudget';
+
+function monthKey(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}`;
+}
+
+function readBudget(): { month: string; count: number } {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(BUDGET_KEY) || 'null');
+    if (parsed && parsed.month === monthKey()) return parsed;
+  } catch { /* ignore */ }
+  return { month: monthKey(), count: 0 };
+}
+
+function budgetExhausted(): boolean {
+  return readBudget().count >= MONTHLY_BUDGET;
+}
+
+function spendBudget(n = 1): void {
+  const b = readBudget();
+  b.count += n;
+  try { localStorage.setItem(BUDGET_KEY, JSON.stringify(b)); } catch { /* ignore */ }
+}
+
+const CACHE_MAX = 300;
+const cache = new Map<string, Suggestion[]>();
+
+function cacheKey(query: string, opts: SearchOptions): string {
+  const lat = typeof opts.nearLat === 'number' ? opts.nearLat.toFixed(2) : '';
+  const lon = typeof opts.nearLon === 'number' ? opts.nearLon.toFixed(2) : '';
+  return `${query.toLowerCase()}|${lat}|${lon}|${opts.limit ?? 6}`;
+}
+
+function cachePut(key: string, value: Suggestion[]): void {
+  if (cache.size >= CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
 // --- Mapbox (Geocoding v6) --------------------------------------------------
 
 const MAPBOX_BASE = 'https://api.mapbox.com/search/geocode/v6';
@@ -73,6 +123,7 @@ async function mapboxSearch(query: string, opts: SearchOptions): Promise<Suggest
   if (typeof opts.nearLat === 'number' && typeof opts.nearLon === 'number') {
     url.searchParams.set('proximity', `${opts.nearLon},${opts.nearLat}`);
   }
+  spendBudget();
   const res = await fetch(url.toString(), { signal: opts.signal });
   if (!res.ok) throw new Error(`Mapbox geocoder responded ${res.status}`);
   const data = await res.json();
@@ -89,6 +140,7 @@ async function mapboxReverse(lat: number, lon: number, signal?: AbortSignal): Pr
   url.searchParams.set('access_token', MAPBOX_TOKEN!);
   url.searchParams.set('limit', '1');
   url.searchParams.set('language', lang());
+  spendBudget();
   const res = await fetch(url.toString(), { signal });
   if (!res.ok) throw new Error(`Mapbox geocoder responded ${res.status}`);
   const data = await res.json();
@@ -206,8 +258,16 @@ async function nominatimReverse(lat: number, lon: number, signal?: AbortSignal):
 export async function searchAddresses(query: string, opts: SearchOptions = {}): Promise<Suggestion[]> {
   const trimmed = query.trim();
   if (trimmed.length < 3) return [];
+
+  const key = cacheKey(trimmed, opts);
+  const hit = cache.get(key);
+  if (hit) return hit;
+
   try {
-    return useMapbox ? await mapboxSearch(trimmed, opts) : await nominatimSearch(trimmed, opts);
+    const viaMapbox = useMapbox && !budgetExhausted();
+    const results = viaMapbox ? await mapboxSearch(trimmed, opts) : await nominatimSearch(trimmed, opts);
+    cachePut(key, results);
+    return results;
   } catch (error: any) {
     if (error?.name === 'AbortError') throw error;
     console.error('Address search error:', error);
@@ -217,7 +277,8 @@ export async function searchAddresses(query: string, opts: SearchOptions = {}): 
 
 export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<Suggestion | null> {
   try {
-    return useMapbox ? await mapboxReverse(lat, lon, signal) : await nominatimReverse(lat, lon, signal);
+    const viaMapbox = useMapbox && !budgetExhausted();
+    return viaMapbox ? await mapboxReverse(lat, lon, signal) : await nominatimReverse(lat, lon, signal);
   } catch (error: any) {
     if (error?.name === 'AbortError') return null;
     console.error('Reverse geocoding error:', error);
