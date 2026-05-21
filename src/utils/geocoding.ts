@@ -29,11 +29,18 @@ export interface SearchOptions {
 // to enable it. Without a token we fall back to Nominatim (OSM), which is
 // keyless but weak on US residential addresses.
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+// Tolerate stray quotes / whitespace pasted into env values.
+function cleanEnv(v?: string): string | undefined {
+  if (!v) return undefined;
+  const t = v.trim().replace(/^["']|["']$/g, '').trim();
+  return t || undefined;
+}
 
-const NOMINATIM_BASE = (import.meta.env.VITE_GEOCODER_BASE_URL as string | undefined)?.replace(/\/+$/, '')
+const MAPBOX_TOKEN = cleanEnv(import.meta.env.VITE_MAPBOX_TOKEN);
+
+const NOMINATIM_BASE = cleanEnv(import.meta.env.VITE_GEOCODER_BASE_URL)?.replace(/\/+$/, '')
   || 'https://nominatim.openstreetmap.org';
-const NOMINATIM_KEY = import.meta.env.VITE_GEOCODER_API_KEY as string | undefined;
+const NOMINATIM_KEY = cleanEnv(import.meta.env.VITE_GEOCODER_API_KEY);
 
 const useMapbox = Boolean(MAPBOX_TOKEN);
 
