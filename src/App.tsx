@@ -32,6 +32,10 @@ const SavedAddressesModal = lazy(() => import('./components/SavedAddressesModal'
 
 type InputMode = 'start' | 'end' | 'stop';
 
+// Signed-out users can build a route of up to this many addresses; signing in
+// removes the cap.
+const FREE_ADDRESS_LIMIT = 10;
+
 interface SortableStopProps {
   loc: Location;
   index: number;
@@ -197,6 +201,10 @@ export default function App() {
   const endLoc = locations.find(l => l.type === 'end');
   const stopLocs = locations.filter(l => l.type === 'stop');
 
+  // Count user-added addresses, excluding the auto-mirrored end on round trips.
+  const addressCount = locations.filter(l => !(startEqualsEnd && l.type === 'end')).length;
+  const atFreeLimit = !user && addressCount >= FREE_ADDRESS_LIMIT;
+
   const displayLocations = routeResult ? routeResult.optimizedLocations : locations;
   const displayStartLoc = displayLocations.find(l => l.type === 'start');
   const displayEndLoc = displayLocations.find(l => l.type === 'end');
@@ -224,6 +232,10 @@ export default function App() {
   }, [startEqualsEnd, inputMode]);
 
   const handlePickSuggestion = (suggestion: Suggestion, mode: 'start' | 'end' | 'stop') => {
+    if (!user && addressCount >= FREE_ADDRESS_LIMIT) {
+      setError(`Sign in to add more than ${FREE_ADDRESS_LIMIT} addresses.`);
+      return;
+    }
     if (mode === 'start' && locations.some(l => l.type === 'start')) {
       setError("Start location already exists. Remove it first.");
       return;
@@ -489,11 +501,17 @@ export default function App() {
           </div>
 
           <div className="space-y-4">
+            {!user && (
+              <p className={`text-xs ${atFreeLimit ? 'text-amber-700 font-medium' : 'text-stone-400'}`}>
+                {addressCount} / {FREE_ADDRESS_LIMIT} addresses
+                {atFreeLimit ? ' — sign in to add more' : ' (sign in for unlimited)'}
+              </p>
+            )}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <h3 className="text-sm font-semibold text-stone-400 uppercase tracking-wider">Locations</h3>
                 {locations.length > 0 && (
-                  <button 
+                  <button
                     onClick={handleClearAll}
                     className="text-xs text-stone-400 underline decoration-stone-200 underline-offset-2 hover:text-stone-600 transition-colors"
                   >
