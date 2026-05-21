@@ -45,6 +45,9 @@ export const supabase: SupabaseClient = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      // OAuth returns tokens in the URL hash (#access_token=...); use the
+      // implicit flow so the client consistently produces and reads them.
+      flowType: 'implicit',
     },
   },
 );
