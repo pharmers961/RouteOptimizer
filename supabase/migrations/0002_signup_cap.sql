@@ -14,7 +14,7 @@ security definer
 set search_path = ''
 as $$
 declare
-  max_users constant int := 25;  -- <<< EDIT: maximum number of accounts
+  max_users constant int := 15;  -- <<< EDIT: maximum number of accounts
   current_users int;
 begin
   select count(*) into current_users from auth.users;
