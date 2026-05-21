@@ -43,6 +43,24 @@ const NOMINATIM_BASE = cleanEnv(import.meta.env.VITE_GEOCODER_BASE_URL)?.replace
 const NOMINATIM_KEY = cleanEnv(import.meta.env.VITE_GEOCODER_API_KEY);
 
 const useMapbox = Boolean(MAPBOX_TOKEN);
+export const isMapboxConfigured = Boolean(MAPBOX_TOKEN);
+
+// User-selectable geocoder preference (persisted). 'default' keeps the
+// automatic behavior (Mapbox when available + under budget, else Nominatim).
+export type GeocoderPreference = 'default' | 'mapbox' | 'nominatim';
+const GEOCODER_PREF_KEY = 'routeOptimizerGeocoder';
+
+export function getGeocoderPreference(): GeocoderPreference {
+  try {
+    const v = localStorage.getItem(GEOCODER_PREF_KEY);
+    if (v === 'mapbox' || v === 'nominatim' || v === 'default') return v;
+  } catch { /* ignore */ }
+  return 'default';
+}
+
+export function setGeocoderPreference(p: GeocoderPreference): void {
+  try { localStorage.setItem(GEOCODER_PREF_KEY, p); } catch { /* ignore */ }
+}
 
 function lang(): string {
   return (typeof navigator !== 'undefined' && navigator.language) ? navigator.language.split('-')[0] : 'en';
@@ -81,13 +99,23 @@ function spendBudget(n = 1): void {
   try { localStorage.setItem(BUDGET_KEY, JSON.stringify(b)); } catch { /* ignore */ }
 }
 
+// Decide which provider to use for a given call, honoring the user preference.
+// 'mapbox' still respects the monthly budget so the cost guarantee holds; falls
+// back to Nominatim when Mapbox isn't usable.
+function resolveProvider(): 'mapbox' | 'nominatim' {
+  const pref = getGeocoderPreference();
+  if (pref === 'nominatim') return 'nominatim';
+  if (pref === 'mapbox') return useMapbox && !budgetExhausted() ? 'mapbox' : 'nominatim';
+  return useMapbox && !budgetExhausted() ? 'mapbox' : 'nominatim';
+}
+
 const CACHE_MAX = 300;
 const cache = new Map<string, Suggestion[]>();
 
-function cacheKey(query: string, opts: SearchOptions): string {
+function cacheKey(query: string, opts: SearchOptions, provider: string): string {
   const lat = typeof opts.nearLat === 'number' ? opts.nearLat.toFixed(2) : '';
   const lon = typeof opts.nearLon === 'number' ? opts.nearLon.toFixed(2) : '';
-  return `${query.toLowerCase()}|${lat}|${lon}|${opts.limit ?? 6}`;
+  return `${provider}|${query.toLowerCase()}|${lat}|${lon}|${opts.limit ?? 6}`;
 }
 
 function cachePut(key: string, value: Suggestion[]): void {
@@ -266,13 +294,13 @@ export async function searchAddresses(query: string, opts: SearchOptions = {}): 
   const trimmed = query.trim();
   if (trimmed.length < 3) return [];
 
-  const key = cacheKey(trimmed, opts);
+  const provider = resolveProvider();
+  const key = cacheKey(trimmed, opts, provider);
   const hit = cache.get(key);
   if (hit) return hit;
 
   try {
-    const viaMapbox = useMapbox && !budgetExhausted();
-    const results = viaMapbox ? await mapboxSearch(trimmed, opts) : await nominatimSearch(trimmed, opts);
+    const results = provider === 'mapbox' ? await mapboxSearch(trimmed, opts) : await nominatimSearch(trimmed, opts);
     cachePut(key, results);
     return results;
   } catch (error: any) {
@@ -284,8 +312,7 @@ export async function searchAddresses(query: string, opts: SearchOptions = {}): 
 
 export async function reverseGeocode(lat: number, lon: number, signal?: AbortSignal): Promise<Suggestion | null> {
   try {
-    const viaMapbox = useMapbox && !budgetExhausted();
-    return viaMapbox ? await mapboxReverse(lat, lon, signal) : await nominatimReverse(lat, lon, signal);
+    return resolveProvider() === 'mapbox' ? await mapboxReverse(lat, lon, signal) : await nominatimReverse(lat, lon, signal);
   } catch (error: any) {
     if (error?.name === 'AbortError') return null;
     console.error('Reverse geocoding error:', error);

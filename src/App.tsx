@@ -1,7 +1,7 @@
-import React, { useState, useEffect, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Navigation, Trash2, Route, ExternalLink, Smartphone, Bookmark, LogIn, LogOut, GripVertical, Loader2 } from 'lucide-react';
-import { Location, Suggestion } from './utils/geocoding';
+import { Navigation, Trash2, Route, ExternalLink, Smartphone, Bookmark, LogIn, LogOut, GripVertical, Loader2, Settings, Check } from 'lucide-react';
+import { Location, Suggestion, GeocoderPreference, getGeocoderPreference, setGeocoderPreference, isMapboxConfigured } from './utils/geocoding';
 import { optimizeRoute, RouteResult } from './utils/routing';
 import AddressFinder from './components/AddressFinder';
 import { SavedAddress } from './components/SavedAddressesModal';
@@ -101,6 +101,25 @@ export default function App() {
   const [isSavedModalOpen, setIsSavedModalOpen] = useState(false);
   const [routeResult, setRouteResult] = useState<RouteResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [geocoderPref, setGeocoderPref] = useState<GeocoderPreference>(() => getGeocoderPreference());
+  const settingsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) setSettingsOpen(false);
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [settingsOpen]);
+
+  const chooseGeocoder = (pref: GeocoderPreference) => {
+    setGeocoderPref(pref);
+    setGeocoderPreference(pref);
+    setSettingsOpen(false);
+  };
 
   const [startEqualsEnd, setStartEqualsEnd] = useState(() => {
     const saved = localStorage.getItem('routeOptimizerStartEqualsEnd');
@@ -437,12 +456,55 @@ export default function App() {
     <div className="flex flex-col md:flex-row min-h-screen md:h-screen w-full bg-stone-50 text-stone-900 font-sans">
       {/* Sidebar */}
       <div className="w-full md:w-96 bg-white shadow-xl z-10 flex flex-col md:h-full md:overflow-hidden shrink-0">
-        <div className="p-6 border-b border-stone-100">
-          <h1 className="text-2xl font-bold text-stone-800 flex items-center gap-2 font-serif">
-            <Route className="w-6 h-6 text-amber-700" />
-            RouteOptimizer
-          </h1>
-          <p className="text-sm text-stone-500 mt-1">Find the most efficient route</p>
+        <div className="p-6 border-b border-stone-100 flex items-start justify-between gap-2">
+          <div>
+            <h1 className="text-2xl font-bold text-stone-800 flex items-center gap-2 font-serif">
+              <Route className="w-6 h-6 text-amber-700" />
+              RouteOptimizer
+            </h1>
+            <p className="text-sm text-stone-500 mt-1">Find the most efficient route</p>
+          </div>
+          <div className="relative" ref={settingsRef}>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen(o => !o)}
+              className="p-2 -mr-1 text-stone-400 hover:text-amber-700 hover:bg-stone-50 rounded-lg transition-colors"
+              title="Settings"
+              aria-label="Settings"
+              aria-expanded={settingsOpen}
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+            {settingsOpen && (
+              <div className="absolute right-0 top-full mt-1 w-64 bg-white border border-stone-200 rounded-lg shadow-lg z-50 p-2">
+                <p className="px-2 py-1 text-xs font-semibold text-stone-400 uppercase tracking-wider">Address search</p>
+                {([
+                  { value: 'default', label: 'Default (auto)', desc: isMapboxConfigured ? 'Mapbox, falls back to Nominatim' : 'Nominatim (no Mapbox token set)' },
+                  { value: 'mapbox', label: 'Mapbox only', desc: isMapboxConfigured ? 'Best accuracy, uses your quota' : 'Unavailable — no Mapbox token set' },
+                  { value: 'nominatim', label: 'Nominatim only', desc: 'Free, no Mapbox usage' },
+                ] as { value: GeocoderPreference; label: string; desc: string }[]).map(opt => {
+                  const disabled = opt.value === 'mapbox' && !isMapboxConfigured;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => chooseGeocoder(opt.value)}
+                      className={`w-full text-left px-2 py-2 rounded-md flex items-start gap-2 transition-colors ${
+                        disabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-stone-50'
+                      }`}
+                    >
+                      <Check className={`w-4 h-4 mt-0.5 shrink-0 ${geocoderPref === opt.value ? 'text-amber-700' : 'text-transparent'}`} />
+                      <span className="min-w-0">
+                        <span className="block text-sm text-stone-800">{opt.label}</span>
+                        <span className="block text-xs text-stone-500">{opt.desc}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="p-6 md:flex-1 md:overflow-y-auto">
